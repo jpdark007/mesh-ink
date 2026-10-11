@@ -5,6 +5,7 @@ idf_component_register(
         "board/t5_buttons_backend.cpp"
         "board/t5_radio_backend.cpp"
         "board/t5_storage_backend.cpp"
+        "hardware/io_coordinator.cpp"
         "companion_notice.cpp"
         "companion_runtime.cpp"
         "local_mesh_runtime.cpp"

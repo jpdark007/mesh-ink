@@ -21,6 +21,7 @@
 #include "../../lib/Meshtastic/src/modules/PositionModule.h"
 #include "../../lib/Meshtastic/src/gps/RTC.h"
 #include "../hardware/gps.h"
+#include "../hardware/io_coordinator.h"
 #include "../hardware/rtc.h"
 #include "../../lib/Meshtastic/src/mqtt/MQTT.h"
 #include "../../lib/Meshtastic/src/main.h"
@@ -317,6 +318,21 @@ void meshink_meshtastic_native_loop(){
     service->loop();
     // Run the genuine Meshtastic router/modules without sleeping MeshInk UI.
     concurrency::mainController.runOrDelay();
+    // NodeDB already holds live config in RAM. Commit any saved segments that
+    // were deferred while the e-paper panel was physically updating.
+    static uint32_t last_storage_flush=0;
+    const uint32_t flush_now=millis();
+    if ((uint32_t)(flush_now-last_storage_flush)>=500UL) {
+        last_storage_flush=flush_now;
+        const int pending=meshink_io_take_deferred_meshtastic_save();
+        if (pending && !nodeDB->saveToDisk(pending)) {
+            meshink_io_defer_meshtastic_save(pending);
+            Serial.println("[MeshInk/IO] ERROR: deferred config commit failed");
+        }
+        // The official transmission-history cache independently stays dirty
+        // until a successful commit; this retry is a no-op when clean.
+        if(transmitHistory) (void)transmitHistory->saveToDisk();
+    }
 #if MESHINK_MESHTASTIC_HW_TEST_LOG
     static uint32_t lastDiagnostic=0;
     if(!lastDiagnostic || (uint32_t)(millis()-lastDiagnostic)>=30000UL){
@@ -334,6 +350,14 @@ void meshink_meshtastic_native_loop(){
 }
 
 void meshink_meshtastic_native_stop(){
+    // Drain the staged settings before an intentional shutdown/reboot.
+    const int pending=meshink_io_take_deferred_meshtastic_save();
+    if (pending && nodeDB && !nodeDB->saveToDisk(pending)) {
+        meshink_io_defer_meshtastic_save(pending);
+        Serial.println("[MeshInk/IO] ERROR: shutdown with unsaved config");
+    }
+    if (transmitHistory && !transmitHistory->saveToDisk())
+        Serial.println("[MeshInk/IO] WARN: shutdown with unsaved TX history");
     // Hardware is exclusively owned by the boot-selected router. Final shutdown
     // is followed by the MeshInk reboot-to-switch; no hot swapping of ISR state.
     native_ready=false;

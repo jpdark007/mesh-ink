@@ -1860,3 +1860,16 @@ assert "removing incomplete new file" in new_journal, "partial first-use initial
 
 # Upstream-only replacement: do not reintroduce the discarded Leaf dependency.
 assert "libmeshtastic-leaf.git" not in platformio_source, "Leaf must be removed"
+
+# 2.1.1-test.33: prevent Meshtastic storage commits across display refreshes.
+io_source = (root / "src" / "hardware" / "io_coordinator.cpp").read_text(encoding="utf-8")
+mt_runtime = (root / "src" / "protocol" / "meshtastic_runtime.cpp").read_text(encoding="utf-8")
+mt_prepare = (root / "tools" / "prepare_meshtastic_library.py").read_text(encoding="utf-8")
+assert "meshink_io_display_begin();" in display_backend_source
+assert "meshink_io_display_end();" in display_backend_source
+assert "display_requests" in io_source and "meshink_io_flash_try_begin()" in io_source
+assert "meshink_io_take_deferred_meshtastic_save()" in mt_runtime
+assert "meshink_io_defer_meshtastic_save(saveWhat)" in mt_prepare
+assert "meshink_io_flash_begin_wait(3000)" in mt_prepare
+assert "TransmitHistory::saveToDisk()" in mt_prepare
+assert "hardware/io_coordinator.cpp" in component_cmake_source

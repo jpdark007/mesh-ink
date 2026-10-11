@@ -299,3 +299,110 @@ if sleep_after not in position_data:
     position_data = position_data.replace(sleep_before, sleep_after, 1)
 position_file.write_text(position_data, encoding="utf-8")
 print("[MeshInk] Official PositionModule enabled; physical GPS and sleep remain MeshInk-owned")
+
+# test.33: build-only flash/display arbitration for the pinned upstream source.
+# SafeFile has a single physical commit transaction; NodeDB config stays in
+# RAM when an e-paper update is busy; TransmitHistory already has a dirty cache.
+io_include = '#include "hardware/io_coordinator.h"\n'
+node_path = upstream / "src" / "mesh" / "NodeDB.cpp"
+node_data = node_path.read_text(encoding="utf-8")
+node_old = '''bool NodeDB::saveToDisk(int saveWhat)
+{
+    LOG_DEBUG("Save to disk %d", saveWhat);
+'''
+node_new = '''bool NodeDB::saveToDisk(int saveWhat)
+{
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    if (!meshink_io_flash_try_begin()) {
+        meshink_io_defer_meshtastic_save(saveWhat);
+        return true; // Accepted into native NodeDB RAM; disk commit is pending.
+    }
+    MeshInkFlashGuard meshink_flash_guard(true);
+#endif
+    LOG_DEBUG("Save to disk %d", saveWhat);
+'''
+if node_new not in node_data:
+    if node_data.count(node_old) != 1:
+        raise RuntimeError("NodeDB save signature changed, review arbitration")
+    node_data = io_include + node_data.replace(node_old, node_new, 1)
+    node_path.write_text(node_data, encoding="utf-8")
+
+tx_path = upstream / "src" / "mesh" / "TransmitHistory.cpp"
+tx_data = tx_path.read_text(encoding="utf-8")
+tx_old = '''bool TransmitHistory::saveToDisk()
+{
+    if (!dirty) {
+        return true;
+    }
+'''
+tx_new = '''bool TransmitHistory::saveToDisk()
+{
+    if (!dirty) {
+        return true;
+    }
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    if (!meshink_io_flash_try_begin()) return false;
+    MeshInkFlashGuard meshink_flash_guard(true);
+#endif
+'''
+if tx_new not in tx_data:
+    if tx_data.count(tx_old) != 1:
+        raise RuntimeError("TransmitHistory save entry changed")
+    tx_data = io_include + tx_data.replace(tx_old, tx_new, 1)
+    tx_path.write_text(tx_data, encoding="utf-8")
+
+# Other upstream writes (e.g. MessageStore) pass through SafeFile. Reserve
+# the whole open/write/verify/rename lifetime rather than a single write().
+safe_h = upstream / "src" / "SafeFile.h"
+safe_h_data = safe_h.read_text(encoding="utf-8")
+safe_h_old = '    explicit SafeFile(char const *filepath, bool fullAtomic = false);\n'
+safe_h_new = '''    explicit SafeFile(char const *filepath, bool fullAtomic = false);
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    ~SafeFile();
+#endif
+'''
+safe_m_old = '    bool fullAtomic;\n'
+safe_m_new = '''    bool fullAtomic;
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    bool meshink_flash_owned = false;
+#endif
+'''
+if safe_h_new not in safe_h_data:
+    if safe_h_data.count(safe_h_old) != 1 or safe_h_data.count(safe_m_old) != 1:
+        raise RuntimeError("SafeFile header changed")
+    safe_h_data = safe_h_data.replace(safe_h_old, safe_h_new, 1)
+    safe_h_data = safe_h_data.replace(safe_m_old, safe_m_new, 1)
+    safe_h.write_text(safe_h_data, encoding="utf-8")
+
+safe_cpp = upstream / "src" / "SafeFile.cpp"
+safe_data = safe_cpp.read_text(encoding="utf-8")
+safe_old = '''SafeFile::SafeFile(const char *_filename, bool fullAtomic)
+    : filename(_filename), f(openFile(_filename, fullAtomic)), fullAtomic(fullAtomic)
+{
+}
+'''
+safe_new = '''SafeFile::SafeFile(const char *_filename, bool fullAtomic)
+    : filename(_filename), f(), fullAtomic(fullAtomic)
+{
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+    meshink_flash_owned = meshink_io_flash_begin_wait(3000);
+    if (!meshink_flash_owned) return;
+#endif
+    f = openFile(_filename, fullAtomic);
+}
+
+#if defined(MESHINK_MESHTASTIC_EXTERNAL_UI)
+SafeFile::~SafeFile()
+{
+    if (meshink_flash_owned) {
+        if (f) f.close();
+        meshink_io_flash_end();
+    }
+}
+#endif
+'''
+if safe_new not in safe_data:
+    if safe_data.count(safe_old) != 1:
+        raise RuntimeError("SafeFile constructor changed")
+    safe_data = io_include + safe_data.replace(safe_old, safe_new, 1)
+    safe_cpp.write_text(safe_data, encoding="utf-8")
