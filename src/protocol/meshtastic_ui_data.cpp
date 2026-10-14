@@ -18,6 +18,10 @@
 namespace {
 constexpr size_t kMaxNodes=64, kMaxChannels=8, kMaxMessages=96;
 constexpr uint32_t kBroadcast=0xffffffffu;
+struct RemoteQuery { uint32_t node=0,started=0; uint8_t channel=0; UiNodeInfoRequest type=UiNodeInfoRequest::None; bool queued=false; };
+static RemoteQuery remote_query{};
+static char remote_status[96]="REQUEST NODE INFO FOR FRESH DETAILS";
+static char remote_telemetry[128]="NO TELEMETRY RECEIVED";
 // First request on discovery; allow ONE subsequent radio-triggered retry
 // after five minutes for mobile/weak links. Then back off for a full 12h
 // window (upstream NodeInfoModule may suppress recent repeat responses).
@@ -743,6 +747,19 @@ void note_position(const meshtastic_MeshPacket& packet){
 }
 
 void note_packet(const meshtastic_MeshPacket& p){
+    if(remote_query.queued&&p.from==remote_query.node&&
+       p.which_payload_variant==meshtastic_MeshPacket_decoded_tag){
+        const auto port=p.decoded.portnum;
+        const bool matched=
+            (remote_query.type==UiNodeInfoRequest::Status&&port==meshtastic_PortNum_NODEINFO_APP)||
+            (remote_query.type==UiNodeInfoRequest::Telemetry&&port==meshtastic_PortNum_TELEMETRY_APP)||
+            (remote_query.type==UiNodeInfoRequest::Path&&port==meshtastic_PortNum_POSITION_APP);
+        if(matched){
+            remote_query.type=UiNodeInfoRequest::None;
+            snprintf(remote_status,sizeof(remote_status),"LAST REQUEST: RESPONSE RECEIVED");
+        }
+    }
+
     if(!state||p.which_payload_variant!=meshtastic_MeshPacket_decoded_tag)return;
     if(p.decoded.portnum==meshtastic_PortNum_NODEINFO_APP){
         // Official Meshtastic NODEINFO_APP (port 4) carries a User protobuf.
@@ -942,8 +959,13 @@ public:
         details_.name=n->name;details_.identity=n->identity;
         details_.last_seen=n->heard_text;details_.role=n->role;
         details_.role_label=n->role_label;details_.route=n->subtitle;
-        details_.capabilities=0;
+        details_.capabilities=UI_NODE_CAP_STATUS|UI_NODE_CAP_TELEMETRY;
         details_.saved_contact=true;
+        details_.advert_age=n->heard_text;
+        details_.status=remote_status;
+        details_.request_active=remote_query.node==n->number&&remote_query.type!=UiNodeInfoRequest::None;
+        details_.request_type=remote_query.type;
+        details_.telemetry=remote_telemetry;
         details_.position_source=n->position_time_text;
         if(n->position_valid){
             snprintf(state->location_text,sizeof(state->location_text),
@@ -1001,7 +1023,21 @@ public:
         changed();
         return persisted;
     }
-    bool request_active_node_info(UiNodeInfoRequest)override{return false;}
+    bool request_active_node_info(UiNodeInfoRequest type)override{
+        if(!state||state->selected_is_channel||!state->selected_node||
+           !state->config_complete||remote_query.type!=UiNodeInfoRequest::None)return false;
+        if(type!=UiNodeInfoRequest::Status&&type!=UiNodeInfoRequest::Telemetry&&
+           type!=UiNodeInfoRequest::Path)return false;
+        Node* n=find_node(state->selected_node);
+        if(!n)return false;
+        remote_query={};
+        remote_query.node=n->number;
+        remote_query.channel=n->heard_channel;
+        remote_query.type=type;
+        remote_query.started=millis();
+        changed();
+        return true;
+    }
     bool login_active_node(const char*,bool)override{return false;}
     bool active_node_saved_password(char*,size_t)const override{return false;}
     const char* active_title()const override{
@@ -1373,4 +1409,15 @@ bool meshink_meshtastic_ui_commit_radio(size_t r,size_t p,uint8_t hops){
     next.hop_limit=hops;
     next.tx_enabled=true;
     return meshink_meshtastic_submit_lora_config(next);
+}
+
+bool meshink_meshtastic_ui_next_remote_request(uint32_t& node,uint8_t& channel,UiNodeInfoRequest& type){
+    if(remote_query.type==UiNodeInfoRequest::None||remote_query.queued)return false;
+    node=remote_query.node;channel=remote_query.channel;type=remote_query.type;return true;
+}
+void meshink_meshtastic_ui_remote_request_result(bool accepted){
+    if(remote_query.type==UiNodeInfoRequest::None)return;
+    if(accepted){remote_query.queued=true;remote_query.started=millis();}
+    else {remote_query.type=UiNodeInfoRequest::None;
+          snprintf(remote_status,sizeof(remote_status),"REQUEST COULD NOT BE QUEUED");}
 }
