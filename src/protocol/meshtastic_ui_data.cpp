@@ -1458,3 +1458,8 @@ void meshink_meshtastic_ui_remote_request_result(bool accepted){
     else {remote_query.type=UiNodeInfoRequest::None;
           snprintf(remote_status,sizeof(remote_status),"REQUEST COULD NOT BE QUEUED");}
 }
+
+bool meshink_meshtastic_ui_own_user(meshtastic_User& out){
+    if(!state||!state->local_user_ready)return false;
+    out=state->local_user;return true;
+}
