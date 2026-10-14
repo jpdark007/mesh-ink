@@ -8,6 +8,7 @@
 #include "hardware/board.h"
 #include "hardware/power.h"
 #include "hardware/performance.h"
+#include "hardware/ram_audit.h"
 
 #ifndef T5_CACHE64_EXPERIMENT
 #define T5_CACHE64_EXPERIMENT 0
@@ -168,6 +169,7 @@ void setup() {
     meshink_performance_set_cpu_mhz(240);
     Serial.begin(115200);
     meshink_buttons_begin();
+    meshink_ram_snapshot("early-after-buttons");
 
 
     bool radio_wake=meshink_board_woke_from_radio();
@@ -324,9 +326,12 @@ void setup() {
         check_local_wireless_state("local-pre",
             meshink_wireless_force_local_radios_off());
 
+        meshink_ram_snapshot("before-ui-setup");
         ui_setup();           // show boot logo while storage/radio initialize
+        meshink_ram_snapshot("after-ui-setup");
 
         mesh_protocol_setup();   // includes first-boot SPIFFS mount / format
+        meshink_ram_snapshot("after-protocol-setup");
 
 
         const MeshInkWirelessState local_ready=meshink_wireless_force_local_radios_off();
@@ -337,6 +342,7 @@ void setup() {
         map_tiles_warm_storage(); // hide SD/map inventory work behind splash
 
         ui_finish_startup();  // only now show a tappable setup/home screen
+        meshink_ram_snapshot("after-ui-finish");
 
         if(mesh_protocol_is_running())Serial.println("[T5-INIT] startup=READY");
     }
@@ -345,6 +351,7 @@ void setup() {
 }
 
 void loop() {
+    meshink_ram_audit_periodic();
     if(cache64_psram_blocked){delay(1000);return;}
     if(deep_sleep_rx_mode){
         mesh_protocol_rx_wake_loop();
