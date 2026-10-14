@@ -17,15 +17,21 @@ jobs:
       - name: Install PlatformIO
         run: python -m pip install --upgrade platformio Pillow
       - name: Build diagnostic firmware
-        run: set -o pipefail
+        run: |
+          set -o pipefail
           pio run -e t5-unified-cache64-ram-audit 2>&1 | tee ram-audit-build.log
       - name: Produce memory/linker inventory
         if: always()
         shell: bash
         run: |
           mkdir -p ram-audit-output
-          cp ram-audit-build.log ram-audit-output/ 2>/dev/null || true
-          find .pio/build/t5-unified-cache64-ram-audit -maxdepth 2 -type f | grep -E '\\.(map|elf|bin)$' | while read -r file; do cp "$file" ram-audit-output/; done || true
+          cp ram-audit-build.log ram-audit-output/
+          BUILD=.pio/build/t5-unified-cache64-ram-audit
+          test -s "$BUILD/firmware.bin"
+          test -s "$BUILD/firmware.elf"
+          find "$BUILD" -name '*.map' -size +0c -print -quit | grep -q .
+          cp "$BUILD/firmware.bin" "$BUILD/firmware.elf" ram-audit-output/
+          find "$BUILD" -name '*.map' -size +0c -exec cp {} ram-audit-output/ \;
           pio run -e t5-unified-cache64-ram-audit -t size > ram-audit-output/size.txt 2>&1 || true
       - uses: actions/upload-artifact@v4
         if: always()
