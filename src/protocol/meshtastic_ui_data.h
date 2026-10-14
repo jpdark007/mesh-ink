@@ -42,6 +42,6 @@ bool meshink_meshtastic_submit_remove_node(uint32_t node_id);
 bool meshink_meshtastic_submit_position_config(const meshtastic_Config_PositionConfig& position);
 
 bool meshink_meshtastic_ui_next_remote_request(uint32_t& node,uint8_t& channel,UiNodeInfoRequest& type);
-void meshink_meshtastic_ui_remote_request_result(bool accepted);
+void meshink_meshtastic_ui_remote_request_result(bool accepted,uint32_t packet_id);
 
 bool meshink_meshtastic_ui_own_user(meshtastic_User& out);
