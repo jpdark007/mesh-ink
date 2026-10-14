@@ -5860,29 +5860,22 @@ static void ui_load_persistent_state() {
     // it while loading ordinary UI preferences: on the first retained-RX
     // alert this function runs after journal replay and must preserve the
     // already-restored direct/channel totals for the standby redraw.
-    const bool legacy_saved=prefs.getBool("map_fix_saved",false);
-    const long legacy_lat=prefs.getLong("map_fix_lat",0);
-    const long legacy_lon=prefs.getLong("map_fix_lon",0);
-    const uint32_t legacy_ts=prefs.getUInt("map_fix_ts",0);
-    Serial.printf("[T5-GPS-NVS] legacy saved=%u lat=%ld lon=%ld fix_ts=%lu\\n",
-                  legacy_saved?1U:0U,legacy_lat,legacy_lon,(unsigned long)legacy_ts);
+    // The checksummed record is now the sole source of retained GPS positions.
+    // Never fall back to legacy coordinates, including a stale (0,0).
     MapGpsRecord stored{};
     const size_t stored_bytes=prefs.getBytesLength("map_fix_v2");
     const bool record_ok=stored_bytes==sizeof(stored) &&
          prefs.getBytes("map_fix_v2",&stored,sizeof(stored))==sizeof(stored) &&
          map_gps_record_valid(stored);
-    if(stored_bytes){
-        Serial.printf("[T5-GPS-NVS] record bytes=%u valid=%u lat=%ld lon=%ld saved_epoch=%lu fix_epoch=%lu\\n",
-                      (unsigned)stored_bytes,record_ok?1U:0U,
-                      (long)stored.latitude,(long)stored.longitude,
-                      (unsigned long)stored.saved_epoch,(unsigned long)stored.fix_epoch);
-    }
-    map_has_last_gps_position=record_ok || (!stored_bytes&&legacy_saved &&
-         legacy_lat>=-85051100L&&legacy_lat<=85051100L &&
-         legacy_lon>=-180000000L&&legacy_lon<=180000000L);
-    map_last_gps_latitude=record_ok?stored.latitude:legacy_lat;
-    map_last_gps_longitude=record_ok?stored.longitude:legacy_lon;
-    map_last_gps_timestamp=record_ok?stored.fix_epoch:legacy_ts;
+    Serial.printf("[T5-GPS-NVS] record bytes=%u valid=%u lat=%ld lon=%ld saved_epoch=%lu fix_epoch=%lu\n",
+                  (unsigned)stored_bytes,record_ok?1U:0U,
+                  record_ok?(long)stored.latitude:0L,record_ok?(long)stored.longitude:0L,
+                  record_ok?(unsigned long)stored.saved_epoch:0UL,
+                  record_ok?(unsigned long)stored.fix_epoch:0UL);
+    map_has_last_gps_position=record_ok;
+    map_last_gps_latitude=record_ok?stored.latitude:0;
+    map_last_gps_longitude=record_ok?stored.longitude:0;
+    map_last_gps_timestamp=record_ok?stored.fix_epoch:0;
     map_last_gps_saved=record_ok;
     map_saved_gps_latitude=map_last_gps_latitude;
     map_saved_gps_longitude=map_last_gps_longitude;
@@ -5897,6 +5890,20 @@ static void ui_load_persistent_state() {
     night_end_minutes=prefs.getUShort("night_end",7*60);
     map_imperial=prefs.getBool("map_imperial",false);
     prefs.end();
+    // Delete only the four obsolete location keys, and only after verifying
+    // a valid replacement. Do not clear any other preferences.
+    if(record_ok){
+        Preferences cleanup;
+        if(cleanup.begin("t5-ui",false)){
+            const char* obsolete[]={"map_fix_saved","map_fix_lat","map_fix_lon","map_fix_ts"};
+            unsigned removed=0;
+            for(const char* key:obsolete){
+                if(cleanup.isKey(key) && cleanup.remove(key)) ++removed;
+            }
+            cleanup.end();
+            if(removed) Serial.printf("[T5-GPS-NVS] removed %u obsolete GPS keys\n",removed);
+        }
+    }
 
     if((uint8_t)frontlight_mode>(uint8_t)FrontlightMode::Off)frontlight_mode=FrontlightMode::On;
     if(frontlight_timeout_index>4)frontlight_timeout_index=2;
@@ -6511,7 +6518,7 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
                     map_gps_record_valid(verify) &&
                     memcmp(&record,&verify,sizeof(record))==0;
                 location_store.end();
-                Serial.printf("[T5-GPS-NVS] write lat=%ld lon=%ld epoch=%lu verified=%u\\n",
+                Serial.printf("[T5-GPS-NVS] write lat=%ld lon=%ld epoch=%lu verified=%u\n",
                               latitude,longitude,(unsigned long)now_epoch,verified?1U:0U);
                 if(verified){
                     map_last_gps_saved=true;
