@@ -2557,7 +2557,8 @@ static void draw_node_delete(){
 }
 
 static void draw_contact_details() {
-    draw_app_header("NODE INFO",true);UiNodeDetails node{};
+    const bool meshtastic_node_ui=mesh_protocol_descriptor().id==2;
+    draw_app_header(meshtastic_node_ui?"MESHTASTIC NODE":"NODE INFO",true);UiNodeDetails node{};
     if(!ui_data||!ui_data->active_node_details(node)){ui_centred("NODE DETAILS UNAVAILABLE",ui_y(300),3,0,true);return;}
     const uint8_t pages=node_info_page_count(node.capabilities);if(details_page>=pages)details_page=pages-1;
     const NodeInfoPage page=node_info_page(node.capabilities,details_page);
@@ -2585,10 +2586,10 @@ static void draw_contact_details() {
     }
     if(page==NodeInfoPage::Overview){
         ui_text("OVERVIEW",layout.section_margin,ui_y(206),3,0,true);
-        ui_text("LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);
+        ui_text(meshtastic_node_ui?"NODE INFO":"LAST ADVERT",layout.section_margin,ui_y(258),2,0,true);
         ui_text_fit(node.advert_age,layout.detail_value_x,ui_y(254),
                     layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
-        ui_text("ROUTE",layout.section_margin,ui_y(326),2,0,true);
+        ui_text(meshtastic_node_ui?"CONNECTION":"ROUTE",layout.section_margin,ui_y(326),2,0,true);
         ui_text_fit(node.route,layout.detail_value_x,ui_y(322),
                     layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
         ui_text("POSITION",layout.section_margin,ui_y(394),2,0,true);
@@ -2611,15 +2612,15 @@ static void draw_contact_details() {
                     overview_position_width,3,0,false);
         const int overview_identity_y=max(
             ui_y(522),overview_last_seen_y+ui_text_height(3)+ui_h(20));
-        ui_text("IDENTITY",layout.section_margin,overview_identity_y+ui_h(4),2,0,true);
+        ui_text(meshtastic_node_ui?"NODE ID":"IDENTITY",layout.section_margin,overview_identity_y+ui_h(4),2,0,true);
         ui_text_fit(node.identity,layout.detail_value_x,overview_identity_y,
                     overview_position_width,2,0,false);
         if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
         if(node.saved_contact){action_button("CHAT",left_action);
             action_button("DELETE",right_action);}
-        else action_button("ADD CONTACT",full_action,true);
+        else action_button(meshtastic_node_ui?"SAVE NODE":"ADD CONTACT",full_action,true);
     } else if(page==NodeInfoPage::Status){
-        ui_text("NODE STATUS",layout.section_margin,ui_y(220),3,0,true);
+        ui_text(meshtastic_node_ui?"DEVICE STATUS":"NODE STATUS",layout.section_margin,ui_y(220),3,0,true);
         if(login_required&&!node.authenticated){
             ui_draw_wrapped("This protocol requires authentication before status can be requested.",
                             layout.section_margin,ui_y(282),layout.section_width,2,0,false,5);
