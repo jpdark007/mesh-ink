@@ -265,14 +265,19 @@ void poll(){
                 query_type==UiNodeInfoRequest::Status?meshtastic_PortNum_NODEINFO_APP:
                 query_type==UiNodeInfoRequest::Telemetry?meshtastic_PortNum_TELEMETRY_APP:
                 meshtastic_PortNum_POSITION_APP;
+            bool payload_ok=true;
             if(query_type==UiNodeInfoRequest::Status){
                 meshtastic_User own=meshtastic_User_init_zero;
-                // An empty NodeInfo request is valid for information retrieval;
-                // node identity is supplied by the destination ID.
-                (void)own;
+                payload_ok=meshink_meshtastic_ui_own_user(own);
+                if(payload_ok){
+                    pb_ostream_t inner=pb_ostream_from_buffer(
+                        req.packet.decoded.payload.bytes,sizeof(req.packet.decoded.payload.bytes));
+                    payload_ok=pb_encode(&inner,meshtastic_User_fields,&own);
+                    if(payload_ok)req.packet.decoded.payload.size=inner.bytes_written;
+                }
             }
             pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
-            if(pb_encode(&outer,meshtastic_ToRadio_fields,&req))
+            if(payload_ok&&pb_encode(&outer,meshtastic_ToRadio_fields,&req))
                 queued=meshink_meshtastic_worker_submit(
                     scratch->wire,outer.bytes_written,req.packet.id);
         }
