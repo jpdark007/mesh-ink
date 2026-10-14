@@ -43,7 +43,7 @@ void init_png_decoder_psram(){
         abort();
     }
     png=new(memory) PNG();
-    Serial.printf("[T5-MAP] PNG decoder PSRAM bytes=%u align=%u ptr=%p\\n",
+    Serial.printf("[T5-MAP] PNG decoder PSRAM bytes=%u align=%u ptr=%p\n",
                   (unsigned)sizeof(PNG),(unsigned)((uintptr_t)png&15U),(void*)png);
 }
 #if T5_CACHE64_EXPERIMENT
