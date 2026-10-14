@@ -19,7 +19,7 @@
 namespace {
 constexpr size_t kMaxNodes=64, kMaxChannels=8, kMaxMessages=96;
 constexpr uint32_t kBroadcast=0xffffffffu;
-struct RemoteQuery { uint32_t node=0,started=0; uint8_t channel=0; UiNodeInfoRequest type=UiNodeInfoRequest::None; bool queued=false,ui_released=false; };
+struct RemoteQuery { uint32_t node=0,started=0,packet_id=0; uint8_t channel=0; UiNodeInfoRequest type=UiNodeInfoRequest::None; bool queued=false,ui_released=false; };
 static RemoteQuery remote_queries[3]{};
 static uint32_t remote_last_queued_ms=0;
 static bool remote_ever_queued=false;
@@ -764,6 +764,7 @@ void note_packet(const meshtastic_MeshPacket& p){
     if(p.which_payload_variant==meshtastic_MeshPacket_decoded_tag){
         for(auto& query:remote_queries){
             if(query.type==UiNodeInfoRequest::None||!query.queued||p.from!=query.node)continue;
+            if(p.decoded.request_id&&p.decoded.request_id!=query.packet_id)continue;
             const auto port=p.decoded.portnum;
             const bool matched=
                 (query.type==UiNodeInfoRequest::Status&&port==meshtastic_PortNum_NODEINFO_APP)||
@@ -1485,11 +1486,12 @@ bool meshink_meshtastic_ui_next_remote_request(uint32_t& node,uint8_t& channel,U
     }
     return false;
 }
-void meshink_meshtastic_ui_remote_request_result(bool accepted){
+void meshink_meshtastic_ui_remote_request_result(bool accepted,uint32_t packet_id){
     for(auto& query:remote_queries){
         if(query.type==UiNodeInfoRequest::None||query.queued)continue;
         if(accepted){
             query.queued=true;
+            query.packet_id=packet_id;
             query.started=millis();
             remote_last_queued_ms=query.started;
             remote_ever_queued=true;
