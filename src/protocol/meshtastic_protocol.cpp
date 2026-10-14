@@ -253,6 +253,7 @@ void poll(){
     if(meshink_meshtastic_ui_next_remote_request(query_node,query_channel,query_type)){
         auto scratch=psram_scratch<PhoneTxScratch>();
         bool queued=false;
+        uint32_t query_packet_id=0;
         if(scratch){
             auto& req=scratch->request;
             req.which_payload_variant=meshtastic_ToRadio_packet_tag;
@@ -260,6 +261,7 @@ void poll(){
             req.packet.channel=query_channel;
             req.packet.id=esp_random();
             if(!req.packet.id)req.packet.id=1;
+            query_packet_id=req.packet.id;
             req.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
             req.packet.decoded.want_response=true;
             req.packet.decoded.portnum=
@@ -301,7 +303,7 @@ void poll(){
                 queued=meshink_meshtastic_worker_submit(
                     scratch->wire,outer.bytes_written,req.packet.id);
         }
-        meshink_meshtastic_ui_remote_request_result(queued);
+        meshink_meshtastic_ui_remote_request_result(queued,query_packet_id);
         Serial.printf("[MT-REQUEST] node=!%08lx type=%u queued=%u\\n",
             (unsigned long)query_node,(unsigned)query_type,queued?1U:0U);
     }
