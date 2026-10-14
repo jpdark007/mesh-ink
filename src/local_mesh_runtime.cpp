@@ -406,6 +406,12 @@ public:
                       (unsigned)channel_unread_total());
         refresh(true);
     }
+    void store_changed(){
+        rebuild_unread_from_journal();
+        refresh(true);
+        rebuild_active();
+        ui_request_data_refresh("message-store");
+    }
     void heard(const uint8_t* key,size_t key_len){note_heard(key,key_len);}
     void refresh(bool force=false){
         const uint32_t interval=ui_is_standby()?60000:10000;
@@ -1071,6 +1077,7 @@ bool MeshCoreUiProvider::login_active_node(const char* password,bool save_passwo
 
 UiDataProvider* local_mesh_provider(){return &provider;}
 void local_mesh_refresh_ui_data(){provider.refresh(true);}
+void local_mesh_store_changed(){provider.store_changed();}
 void local_mesh_receive_channel_from_core(
         uint8_t channel,uint32_t timestamp,const char* text,
         bool has_rf,int8_t snr_q4,uint8_t path_len){

@@ -72,6 +72,7 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
             if(ref.ack!=ack||!ref.sequence)continue;
             meshink_message_store().update_outgoing(
                 ref.sequence,UiMessageState::Delivered,ack,ref.route_flood);
+            local_mesh_store_changed();
             const uint32_t delivered_sequence=ref.sequence;
             for(auto& item:ack_refs_)if(item.sequence==delivered_sequence)item={};
             return true;
@@ -124,6 +125,7 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
             journal.update_state(sequence,state);
             if(ack)journal.update_ack(sequence,ack);
         }
+        if(sequence)local_mesh_store_changed();
         return sequence;
     }
 
@@ -173,6 +175,7 @@ class MeshInkBLEInterface final : public SerialBLEInterface {
         if(text_len)memcpy(text,frame+text_start,text_len);
         const bool cleared=meshink_message_store().mark_matching_received_read(
             kind,key,key_len,timestamp,text);
+        if(cleared)local_mesh_store_changed();
         T5_DEBUGF(T5_LOG_MESH,
                   "[T5-STORE] companion sync kind=%u ts=%lu unread-cleared=%u\n",
                   (unsigned)kind,(unsigned long)timestamp,cleared?1U:0U);
@@ -240,6 +243,7 @@ protected:
                 UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
                 pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
                 (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);
+            local_mesh_store_changed();
         }
         MyMesh::onMessageRecv(from,pkt,sender_timestamp,text);
     }
@@ -253,6 +257,7 @@ protected:
                 UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
                 pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
                 (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);
+            local_mesh_store_changed();
         }
         MyMesh::onSignedMessageRecv(from,pkt,sender_timestamp,sender_prefix,text);
     }
@@ -268,6 +273,7 @@ protected:
                     UiMessageState::Received,0,MeshInkMessageOrigin::CompanionApp,
                     pkt!=nullptr,pkt?(int8_t)(pkt->getSNR()*4.0f):0,
                     (pkt&&pkt->isRouteFlood())?pkt->path_len:MESHINK_MESSAGE_PATH_UNKNOWN,true);
+                local_mesh_store_changed();
             }
             MyMesh::onChannelMessageRecv(channel,pkt,timestamp,text);
             return;
