@@ -195,6 +195,8 @@ On first setup, choose a node name and radio preset. MeshInk then opens into the
 
 The bottom navigation provides **Contacts**, **Channels**, **Maps** and **More**. From More you can discover nodes, advertise your node, open Settings, or restart into Bluetooth companion mode.
 
+When connecting to Bluetooth companion mode, use the default BLE PIN code **`123456`**.
+
 A long press of the BOOT button enters or leaves standby. A short press refreshes the e-paper display.
 
 ### Quick Settings
