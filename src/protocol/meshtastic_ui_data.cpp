@@ -1114,6 +1114,12 @@ void meshink_meshtastic_ui_begin(){
 }
 UiDataProvider* meshink_meshtastic_ui_provider(){return state?&provider:nullptr;}
 void meshink_meshtastic_ui_tick(){
+    if(remote_query.type!=UiNodeInfoRequest::None &&
+       (uint32_t)(millis()-remote_query.started)>60000UL){
+        snprintf(remote_status,sizeof(remote_status),"REQUEST TIMED OUT - NO RESPONSE");
+        remote_query.type=UiNodeInfoRequest::None;
+        changed();
+    }
     flush_node_snapshot();
     apply_pending_location_sharing();
 }
