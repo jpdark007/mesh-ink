@@ -20,7 +20,19 @@ namespace {
 constexpr size_t kMaxNodes=64, kMaxChannels=8, kMaxMessages=96;
 constexpr uint32_t kBroadcast=0xffffffffu;
 struct RemoteQuery { uint32_t node=0,started=0; uint8_t channel=0; UiNodeInfoRequest type=UiNodeInfoRequest::None; bool queued=false; };
-static RemoteQuery remote_query{};
+static RemoteQuery remote_queries[3]{};
+static uint32_t remote_last_queued_ms=0;
+static bool remote_ever_queued=false;
+static int remote_slot(UiNodeInfoRequest type){
+    if(type==UiNodeInfoRequest::Status)return 0;
+    if(type==UiNodeInfoRequest::Telemetry)return 1;
+    if(type==UiNodeInfoRequest::Path)return 2; // Meshtastic position request
+    return -1;
+}
+static bool remote_busy(){
+    if(!remote_ever_queued)return false;
+    return (uint32_t)(millis()-remote_last_queued_ms)<5000UL;
+}
 static char remote_status[96]="REQUEST NODE INFO FOR FRESH DETAILS";
 static char remote_telemetry[128]="NO TELEMETRY RECEIVED";
 // First request on discovery; allow ONE subsequent radio-triggered retry
@@ -749,16 +761,18 @@ void note_position(const meshtastic_MeshPacket& packet){
 }
 
 void note_packet(const meshtastic_MeshPacket& p){
-    if(remote_query.queued&&p.from==remote_query.node&&
-       p.which_payload_variant==meshtastic_MeshPacket_decoded_tag){
-        const auto port=p.decoded.portnum;
-        const bool matched=
-            (remote_query.type==UiNodeInfoRequest::Status&&port==meshtastic_PortNum_NODEINFO_APP)||
-            (remote_query.type==UiNodeInfoRequest::Telemetry&&port==meshtastic_PortNum_TELEMETRY_APP)||
-            (remote_query.type==UiNodeInfoRequest::Path&&port==meshtastic_PortNum_POSITION_APP);
-        if(matched){
-            remote_query.type=UiNodeInfoRequest::None;
-            snprintf(remote_status,sizeof(remote_status),"LAST REQUEST: RESPONSE RECEIVED");
+    if(p.which_payload_variant==meshtastic_MeshPacket_decoded_tag){
+        for(auto& query:remote_queries){
+            if(query.type==UiNodeInfoRequest::None||!query.queued||p.from!=query.node)continue;
+            const auto port=p.decoded.portnum;
+            const bool matched=
+                (query.type==UiNodeInfoRequest::Status&&port==meshtastic_PortNum_NODEINFO_APP)||
+                (query.type==UiNodeInfoRequest::Telemetry&&port==meshtastic_PortNum_TELEMETRY_APP)||
+                (query.type==UiNodeInfoRequest::Path&&port==meshtastic_PortNum_POSITION_APP);
+            if(matched){
+                query.type=UiNodeInfoRequest::None;
+                snprintf(remote_status,sizeof(remote_status),"LAST REQUEST: RESPONSE RECEIVED");
+            }
         }
     }
 
@@ -811,8 +825,7 @@ void note_packet(const meshtastic_MeshPacket& p){
         }else{
             snprintf(n->telemetry_text,sizeof(n->telemetry_text),"TELEMETRY RECEIVED (OTHER TYPE)");
         }
-        if(remote_query.node==p.from&&remote_query.type==UiNodeInfoRequest::None)
-            snprintf(remote_status,sizeof(remote_status),"TELEMETRY RESPONSE RECEIVED");
+        snprintf(remote_status,sizeof(remote_status),"TELEMETRY RECEIVED");
         changed();return;
     }
     if(p.decoded.portnum==meshtastic_PortNum_ROUTING_APP){note_routing(p);return;}
@@ -994,8 +1007,14 @@ public:
         details_.saved_contact=true;
         details_.advert_age=n->heard_text;
         details_.status=remote_status;
-        details_.request_active=remote_query.node==n->number&&remote_query.type!=UiNodeInfoRequest::None;
-        details_.request_type=remote_query.type;
+        details_.request_active=false;
+        details_.request_type=UiNodeInfoRequest::None;
+        for(const auto& query:remote_queries){
+            if(query.node==n->number&&query.type!=UiNodeInfoRequest::None&&
+               (uint32_t)(millis()-query.started)<5000UL){
+                details_.request_active=true;details_.request_type=query.type;break;
+            }
+        }
         details_.telemetry=n->telemetry_text[0]?n->telemetry_text:remote_telemetry;
         details_.position_source=n->position_time_text;
         if(n->position_valid){
@@ -1056,16 +1075,20 @@ public:
     }
     bool request_active_node_info(UiNodeInfoRequest type)override{
         if(!state||state->selected_is_channel||!state->selected_node||
-           !state->config_complete||remote_query.type!=UiNodeInfoRequest::None)return false;
+           !state->config_complete||remote_busy())return false;
         if(type!=UiNodeInfoRequest::Status&&type!=UiNodeInfoRequest::Telemetry&&
            type!=UiNodeInfoRequest::Path)return false;
         Node* n=find_node(state->selected_node);
         if(!n)return false;
-        remote_query={};
-        remote_query.node=n->number;
-        remote_query.channel=n->heard_channel;
-        remote_query.type=type;
-        remote_query.started=millis();
+        const int slot=remote_slot(type);
+        if(slot<0)return false;
+        RemoteQuery& query=remote_queries[slot];
+        if(query.type!=UiNodeInfoRequest::None)return false;
+        query={};
+        query.node=n->number;
+        query.channel=n->heard_channel;
+        query.type=type;
+        query.started=millis();
         changed();
         return true;
     }
@@ -1145,11 +1168,13 @@ void meshink_meshtastic_ui_begin(){
 }
 UiDataProvider* meshink_meshtastic_ui_provider(){return state?&provider:nullptr;}
 void meshink_meshtastic_ui_tick(){
-    if(remote_query.type!=UiNodeInfoRequest::None &&
-       (uint32_t)(millis()-remote_query.started)>60000UL){
-        snprintf(remote_status,sizeof(remote_status),"REQUEST TIMED OUT - NO RESPONSE");
-        remote_query.type=UiNodeInfoRequest::None;
-        changed();
+    for(auto& query:remote_queries){
+        if(query.type!=UiNodeInfoRequest::None&&
+           (uint32_t)(millis()-query.started)>=30000UL){
+            query.type=UiNodeInfoRequest::None;
+            snprintf(remote_status,sizeof(remote_status),"REQUEST TIMED OUT - NO RESPONSE");
+            changed();
+        }
     }
     flush_node_snapshot();
     apply_pending_location_sharing();
@@ -1449,14 +1474,27 @@ bool meshink_meshtastic_ui_commit_radio(size_t r,size_t p,uint8_t hops){
 }
 
 bool meshink_meshtastic_ui_next_remote_request(uint32_t& node,uint8_t& channel,UiNodeInfoRequest& type){
-    if(remote_query.type==UiNodeInfoRequest::None||remote_query.queued)return false;
-    node=remote_query.node;channel=remote_query.channel;type=remote_query.type;return true;
+    for(const auto& query:remote_queries){
+        if(query.type==UiNodeInfoRequest::None||query.queued)continue;
+        node=query.node;channel=query.channel;type=query.type;return true;
+    }
+    return false;
 }
 void meshink_meshtastic_ui_remote_request_result(bool accepted){
-    if(remote_query.type==UiNodeInfoRequest::None)return;
-    if(accepted){remote_query.queued=true;remote_query.started=millis();}
-    else {remote_query.type=UiNodeInfoRequest::None;
-          snprintf(remote_status,sizeof(remote_status),"REQUEST COULD NOT BE QUEUED");}
+    for(auto& query:remote_queries){
+        if(query.type==UiNodeInfoRequest::None||query.queued)continue;
+        if(accepted){
+            query.queued=true;
+            query.started=millis();
+            remote_last_queued_ms=query.started;
+            remote_ever_queued=true;
+        }else{
+            query.type=UiNodeInfoRequest::None;
+            snprintf(remote_status,sizeof(remote_status),"REQUEST COULD NOT BE QUEUED");
+        }
+        changed();
+        return;
+    }
 }
 
 bool meshink_meshtastic_ui_own_user(meshtastic_User& out){
