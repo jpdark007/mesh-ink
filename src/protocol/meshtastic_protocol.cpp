@@ -245,6 +245,41 @@ void poll(){
             Serial.printf("[MeshInk/MT] ERROR: FromRadio protobuf decode failed, len=%u\n",(unsigned)n);
         }
     }
+    // Dispatch a user-requested query through the unchanged official worker.
+    uint32_t query_node=0;
+    uint8_t query_channel=0;
+    UiNodeInfoRequest query_type=UiNodeInfoRequest::None;
+    if(meshink_meshtastic_ui_next_remote_request(query_node,query_channel,query_type)){
+        auto scratch=psram_scratch<PhoneTxScratch>();
+        bool queued=false;
+        if(scratch){
+            auto& req=scratch->request;
+            req.which_payload_variant=meshtastic_ToRadio_packet_tag;
+            req.packet.to=query_node;
+            req.packet.channel=query_channel;
+            req.packet.id=esp_random();
+            if(!req.packet.id)req.packet.id=1;
+            req.packet.which_payload_variant=meshtastic_MeshPacket_decoded_tag;
+            req.packet.decoded.want_response=true;
+            req.packet.decoded.portnum=
+                query_type==UiNodeInfoRequest::Status?meshtastic_PortNum_NODEINFO_APP:
+                query_type==UiNodeInfoRequest::Telemetry?meshtastic_PortNum_TELEMETRY_APP:
+                meshtastic_PortNum_POSITION_APP;
+            if(query_type==UiNodeInfoRequest::Status){
+                meshtastic_User own=meshtastic_User_init_zero;
+                // An empty NodeInfo request is valid for information retrieval;
+                // node identity is supplied by the destination ID.
+                (void)own;
+            }
+            pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
+            if(pb_encode(&outer,meshtastic_ToRadio_fields,&req))
+                queued=meshink_meshtastic_worker_submit(
+                    scratch->wire,outer.bytes_written,req.packet.id);
+        }
+        meshink_meshtastic_ui_remote_request_result(queued);
+        Serial.printf("[MT-REQUEST] node=!%08lx type=%u queued=%u\\n",
+            (unsigned long)query_node,(unsigned)query_type,queued?1U:0U);
+    }
     // Send at most one identity request after processing incoming PhoneAPI
     // events; RF scheduling, encryption, retransmission and airtime limits
     // remain owned by the unchanged official Meshtastic worker/Router.
