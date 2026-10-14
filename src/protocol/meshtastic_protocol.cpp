@@ -4,6 +4,7 @@
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/admin.pb.h"
 #include <esp_system.h>
 #include "../../lib/Meshtastic/src/mesh/generated/meshtastic/mesh.pb.h"
+#include "../../lib/Meshtastic/src/mesh/generated/meshtastic/telemetry.pb.h"
 #include "mesh_protocol_backend.h"
 #include "meshtastic_official_phoneapi.h"
 #include "meshtastic_runtime.h"
@@ -275,6 +276,25 @@ void poll(){
                     payload_ok=pb_encode(&inner,meshtastic_User_fields,&own);
                     if(payload_ok)req.packet.decoded.payload.size=inner.bytes_written;
                 }
+            }
+            if(payload_ok&&query_type==UiNodeInfoRequest::Telemetry){
+                auto tm=psram_scratch<meshtastic_Telemetry>();
+                payload_ok=static_cast<bool>(tm);
+                if(payload_ok){
+                    tm->which_variant=meshtastic_Telemetry_device_metrics_tag;
+                    pb_ostream_t inner=pb_ostream_from_buffer(
+                        req.packet.decoded.payload.bytes,sizeof(req.packet.decoded.payload.bytes));
+                    payload_ok=pb_encode(&inner,meshtastic_Telemetry_fields,tm.get());
+                    if(payload_ok)req.packet.decoded.payload.size=inner.bytes_written;
+                }
+            }else if(payload_ok&&query_type==UiNodeInfoRequest::Path){
+                meshtastic_Position position=meshtastic_Position_init_zero;
+                const time_t current=time(nullptr);
+                if(current>=1577836800LL)position.time=(uint32_t)current;
+                pb_ostream_t inner=pb_ostream_from_buffer(
+                    req.packet.decoded.payload.bytes,sizeof(req.packet.decoded.payload.bytes));
+                payload_ok=pb_encode(&inner,meshtastic_Position_fields,&position);
+                if(payload_ok)req.packet.decoded.payload.size=inner.bytes_written;
             }
             pb_ostream_t outer=pb_ostream_from_buffer(scratch->wire,sizeof(scratch->wire));
             if(payload_ok&&pb_encode(&outer,meshtastic_ToRadio_fields,&req))
