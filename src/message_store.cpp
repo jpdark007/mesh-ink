@@ -207,8 +207,13 @@ bool MeshInkMessageStore::begin(){
                   (unsigned long)disk.magic,(unsigned)disk.version,(unsigned)disk.capacity);
     SPIFFS.remove(STORE_INVALID_PATH);
     if(!SPIFFS.rename(STORE_PATH,STORE_INVALID_PATH)){
-        Serial.println("[T5-STORE] ERROR preserving unsupported message journal");
-        return false;
+        // A truncated file can still be opened while SPIFFS refuses the
+        // rename. The journal is disposable cache data, so recover by
+        // replacing it rather than preventing the UI from starting.
+        Serial.println("[T5-STORE] WARN preserving unsupported message journal failed; recreating in place");
+        const bool recovered=create_empty();
+        initialized_=recovered;
+        return recovered;
     }
     const bool ok=create_empty();
     if(!ok){
