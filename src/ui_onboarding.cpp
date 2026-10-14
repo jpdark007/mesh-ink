@@ -2636,7 +2636,7 @@ static void draw_contact_details() {
             const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;
             ui_draw_wrapped(node.status,layout.section_margin,status_y,
                             layout.section_width,status_scale,0,true,14);
-            action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),full_action,true);
+            action_button(request_label(UiNodeInfoRequest::Status,meshtastic_node_ui?"REQUEST NODE INFO":"REQUEST STATUS"),full_action,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
         ui_text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
@@ -2661,7 +2661,10 @@ static void draw_contact_details() {
             ui_draw_wrapped(node.position_source,layout.section_margin,telemetry_source_y,
                             layout.section_width,2,0,false,1);
             if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
-            action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
+            if(meshtastic_node_ui){
+                action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),left_action,true);
+                action_button(request_label(UiNodeInfoRequest::Path,"REQUEST POSITION"),right_action,true);
+            }else action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),full_action,true);
         }
     } else {
         const bool can_path=node_has_capability(node.capabilities,UI_NODE_CAP_PATH);
@@ -5048,9 +5051,14 @@ static bool handle_app_tap(int16_t x,int16_t y) {
                     if(login_required&&!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;}
                     show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Status)?"REQUESTING STATUS":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
-                if(node.saved_contact&&page==NodeInfoPage::Telemetry&&hit(x,y,meshink_node_action_rect(portrait_layout()))){
+                if(node.saved_contact&&page==NodeInfoPage::Telemetry&&
+                   (mesh_protocol_descriptor().id==2?
+                      (hit(x,y,meshink_node_left_action_rect(portrait_layout()))||
+                       hit(x,y,meshink_node_right_action_rect(portrait_layout()))):
+                      hit(x,y,meshink_node_action_rect(portrait_layout())))){
                     if(login_required&&!node.authenticated){if(!node.login_active){remote_password[0]=0;save_remote_password=ui_data->active_node_saved_password(remote_password,sizeof(remote_password));keyboard_password_mode=true;keyboard_message_mode=false;keyboard_visible=true;draw_screen();refresh(MeshInkRefreshMode::FastGray16);}return true;}
-                    show_toast(ui_data->request_active_node_info(UiNodeInfoRequest::Telemetry)?"REQUESTING TELEMETRY":"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
+                    const bool requesting_position=mesh_protocol_descriptor().id==2&&hit(x,y,meshink_node_right_action_rect(portrait_layout()));
+                    show_toast(ui_data->request_active_node_info(requesting_position?UiNodeInfoRequest::Path:UiNodeInfoRequest::Telemetry)?(requesting_position?"REQUESTING POSITION":"REQUESTING TELEMETRY"):"REQUEST BUSY");draw_screen();refresh(MeshInkRefreshMode::Direct);return true;
                 }
                 if(node.saved_contact&&page==NodeInfoPage::Path){
                     const bool can_path=node_has_capability(node.capabilities,UI_NODE_CAP_PATH);
