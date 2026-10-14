@@ -211,7 +211,36 @@ static long map_last_gps_latitude=0,map_last_gps_longitude=0;
 static uint32_t map_last_gps_timestamp=0,map_saved_gps_timestamp=0;
 static bool map_last_gps_saved=false;
 static long map_saved_gps_latitude=0,map_saved_gps_longitude=0;
-static uint32_t map_last_gps_save_ms=0;
+static uint32_t map_last_gps_saved_epoch=0;
+struct MapGpsRecord {
+    uint32_t magic;
+    int32_t latitude;
+    int32_t longitude;
+    uint32_t fix_epoch;
+    uint32_t saved_epoch;
+    uint32_t checksum;
+};
+static constexpr uint32_t MAP_GPS_MAGIC=0x4D475031UL;
+static uint32_t map_gps_checksum(const MapGpsRecord& r) {
+    uint32_t hash=2166136261UL;
+    const uint8_t* data=(const uint8_t*)&r;
+    for(size_t i=0;i<offsetof(MapGpsRecord,checksum);++i){
+        hash=(hash^data[i])*16777619UL;
+    }
+    return hash;
+}
+static bool map_gps_record_valid(const MapGpsRecord& r) {
+    return r.magic==MAP_GPS_MAGIC &&
+           r.checksum==map_gps_checksum(r) &&
+           r.latitude>=-85051100&&r.latitude<=85051100 &&
+           r.longitude>=-180000000&&r.longitude<=180000000 &&
+           r.saved_epoch>=1577836800UL;
+}
+static uint32_t map_gps_current_epoch() {
+    const time_t now=time(nullptr);
+    return now>=1577836800LL&&now<=UINT32_MAX?(uint32_t)now:0;
+}
+
 static int16_t status_battery = -1;
 static MeshInkChargeState status_charge_state=MeshInkChargeState::Unknown;
 static int8_t status_hour = -1;
@@ -5831,17 +5860,34 @@ static void ui_load_persistent_state() {
     // it while loading ordinary UI preferences: on the first retained-RX
     // alert this function runs after journal replay and must preserve the
     // already-restored direct/channel totals for the standby redraw.
-    map_has_last_gps_position=prefs.getBool("map_fix_saved",false);
-    map_last_gps_latitude=prefs.getLong("map_fix_lat",0);
-    map_last_gps_longitude=prefs.getLong("map_fix_lon",0);
-    map_last_gps_timestamp=prefs.getUInt("map_fix_ts",0);
-    map_has_last_gps_position=map_has_last_gps_position &&
-        map_last_gps_latitude>=-85051100L&&map_last_gps_latitude<=85051100L &&
-        map_last_gps_longitude>=-180000000L&&map_last_gps_longitude<=180000000L;
-    map_last_gps_saved=map_has_last_gps_position;
+    const bool legacy_saved=prefs.getBool("map_fix_saved",false);
+    const long legacy_lat=prefs.getLong("map_fix_lat",0);
+    const long legacy_lon=prefs.getLong("map_fix_lon",0);
+    const uint32_t legacy_ts=prefs.getUInt("map_fix_ts",0);
+    Serial.printf("[T5-GPS-NVS] legacy saved=%u lat=%ld lon=%ld fix_ts=%lu\\n",
+                  legacy_saved?1U:0U,legacy_lat,legacy_lon,(unsigned long)legacy_ts);
+    MapGpsRecord stored{};
+    const size_t stored_bytes=prefs.getBytesLength("map_fix_v2");
+    const bool record_ok=stored_bytes==sizeof(stored) &&
+         prefs.getBytes("map_fix_v2",&stored,sizeof(stored))==sizeof(stored) &&
+         map_gps_record_valid(stored);
+    if(stored_bytes){
+        Serial.printf("[T5-GPS-NVS] record bytes=%u valid=%u lat=%ld lon=%ld saved_epoch=%lu fix_epoch=%lu\\n",
+                      (unsigned)stored_bytes,record_ok?1U:0U,
+                      (long)stored.latitude,(long)stored.longitude,
+                      (unsigned long)stored.saved_epoch,(unsigned long)stored.fix_epoch);
+    }
+    map_has_last_gps_position=record_ok || (!stored_bytes&&legacy_saved &&
+         legacy_lat>=-85051100L&&legacy_lat<=85051100L &&
+         legacy_lon>=-180000000L&&legacy_lon<=180000000L);
+    map_last_gps_latitude=record_ok?stored.latitude:legacy_lat;
+    map_last_gps_longitude=record_ok?stored.longitude:legacy_lon;
+    map_last_gps_timestamp=record_ok?stored.fix_epoch:legacy_ts;
+    map_last_gps_saved=record_ok;
     map_saved_gps_latitude=map_last_gps_latitude;
     map_saved_gps_longitude=map_last_gps_longitude;
     map_saved_gps_timestamp=map_last_gps_timestamp;
+    map_last_gps_saved_epoch=record_ok?stored.saved_epoch:0;
     frontlight_mode=(FrontlightMode)prefs.getUChar("light_mode",(uint8_t)FrontlightMode::On);
     frontlight_timeout_index=prefs.getUChar("light_timeout",2);
     frontlight_brightness=prefs.getUChar("light_level",30);
@@ -6442,31 +6488,38 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         if(timestamp)map_last_gps_timestamp=timestamp;
         update_auto_timezone_from_gps(latitude,longitude);
         const uint32_t gps_now=millis();
-        // Limit NVS writes: store the first fix, then only changed positions
-        // at most once every 30 minutes. Existing saved positions are kept
-        // until a fresh fix differs by roughly 0.005 degrees or more.
-        const bool differs=!map_last_gps_saved ||
-            labs(latitude-map_saved_gps_latitude)>=5000L ||
-            labs(longitude-map_saved_gps_longitude)>=5000L;
-        // Even when stationary, retain a recent verified fix time so the
-        // historical own-position marker is honestly dated after reboot.
-        const bool timestamp_due=map_last_gps_timestamp&&
-            (!map_saved_gps_timestamp||
-             map_last_gps_timestamp-map_saved_gps_timestamp>=21600UL);
-        if((differs||timestamp_due)&&(!map_last_gps_save_ms||
-            gps_now-map_last_gps_save_ms>=1800000UL)){
+        // Save the first verified fix after 15 minutes of wall-clock time,
+        // including across reboots; don't depend on millis() reset at boot.
+        const uint32_t now_epoch=map_gps_current_epoch();
+        const bool due=now_epoch &&
+            (!map_last_gps_saved_epoch ||
+             now_epoch<map_last_gps_saved_epoch ||
+             now_epoch-map_last_gps_saved_epoch>=900UL);
+        if(due){
+            MapGpsRecord record{};
+            record.magic=MAP_GPS_MAGIC;
+            record.latitude=(int32_t)latitude;
+            record.longitude=(int32_t)longitude;
+            record.fix_epoch=timestamp?timestamp:now_epoch;
+            record.saved_epoch=now_epoch;
+            record.checksum=map_gps_checksum(record);
             Preferences location_store;
             if(location_store.begin("t5-ui",false)){
-                const bool ok=location_store.putLong("map_fix_lat",latitude)>0 &&
-                    location_store.putLong("map_fix_lon",longitude)>0 &&
-                    location_store.putUInt("map_fix_ts",map_last_gps_timestamp)>0 &&
-                    location_store.putBool("map_fix_saved",true)>0;
+                const bool written=location_store.putBytes("map_fix_v2",&record,sizeof(record))==sizeof(record);
+                MapGpsRecord verify{};
+                const bool verified=written &&
+                    location_store.getBytes("map_fix_v2",&verify,sizeof(verify))==sizeof(verify) &&
+                    map_gps_record_valid(verify) &&
+                    memcmp(&record,&verify,sizeof(record))==0;
                 location_store.end();
-                if(ok){
+                Serial.printf("[T5-GPS-NVS] write lat=%ld lon=%ld epoch=%lu verified=%u\\n",
+                              latitude,longitude,(unsigned long)now_epoch,verified?1U:0U);
+                if(verified){
                     map_last_gps_saved=true;
                     map_saved_gps_latitude=latitude;
                     map_saved_gps_longitude=longitude;
-                    map_saved_gps_timestamp=map_last_gps_timestamp;
+                    map_saved_gps_timestamp=record.fix_epoch;
+                    map_last_gps_saved_epoch=now_epoch;
                     map_last_gps_save_ms=gps_now?gps_now:1;
                 }
             }
