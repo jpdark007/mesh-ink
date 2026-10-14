@@ -2,6 +2,7 @@
 #include "../ui_onboarding.h"
 #include "../message_store.h"
 #include <pb_decode.h>
+#include "../../lib/Meshtastic/src/mesh/generated/meshtastic/telemetry.pb.h"
 #include <esp_system.h>
 #include <SPIFFS.h>
 #include <Preferences.h>
@@ -46,6 +47,7 @@ struct Node {
     uint32_t heard=0;
     uint32_t position_received_at=0,position_fix_at=0;
     char position_time_text[48]{};
+    char telemetry_text[160]{};
     bool has_battery=false;
     uint32_t battery=0;
     char name[40]{};
@@ -784,6 +786,35 @@ void note_packet(const meshtastic_MeshPacket& p){
         changed();
         return;
     }
+    if(p.decoded.portnum==meshtastic_PortNum_TELEMETRY_APP){
+        if(!p.from||p.from==state->me)return;
+        meshtastic_Telemetry tm=meshtastic_Telemetry_init_zero;
+        pb_istream_t input=pb_istream_from_buffer(p.decoded.payload.bytes,p.decoded.payload.size);
+        if(!pb_decode(&input,meshtastic_Telemetry_fields,&tm))return;
+        Node* n=node_for(p.from);if(!n)return;
+        if(tm.which_variant==meshtastic_Telemetry_device_metrics_tag){
+            const auto& d=tm.variant.device_metrics;
+            snprintf(n->telemetry_text,sizeof(n->telemetry_text),
+                "BATTERY %s%lu%%  VOLTAGE %s%.2fV\nCHANNEL %s%.1f%%  AIR TX %s%.1f%%",
+                d.has_battery_level?"":"N/A ",(unsigned long)(d.has_battery_level?d.battery_level:0),
+                d.has_voltage?"":"N/A ",d.has_voltage?d.voltage:0.0,
+                d.has_channel_utilization?"":"N/A ",d.has_channel_utilization?d.channel_utilization:0.0,
+                d.has_air_util_tx?"":"N/A ",d.has_air_util_tx?d.air_util_tx:0.0);
+            if(d.has_battery_level){n->battery=d.battery_level;n->has_battery=true;}
+        }else if(tm.which_variant==meshtastic_Telemetry_environment_metrics_tag){
+            const auto& e=tm.variant.environment_metrics;
+            snprintf(n->telemetry_text,sizeof(n->telemetry_text),
+                "TEMP %s%.1f C  HUMIDITY %s%.1f%%\nPRESSURE %s%.1f hPa",
+                e.has_temperature?"":"N/A ",e.has_temperature?e.temperature:0.0,
+                e.has_relative_humidity?"":"N/A ",e.has_relative_humidity?e.relative_humidity:0.0,
+                e.has_barometric_pressure?"":"N/A ",e.has_barometric_pressure?e.barometric_pressure:0.0);
+        }else{
+            snprintf(n->telemetry_text,sizeof(n->telemetry_text),"TELEMETRY RECEIVED (OTHER TYPE)");
+        }
+        if(remote_query.node==p.from&&remote_query.type==UiNodeInfoRequest::None)
+            snprintf(remote_status,sizeof(remote_status),"TELEMETRY RESPONSE RECEIVED");
+        changed();return;
+    }
     if(p.decoded.portnum==meshtastic_PortNum_ROUTING_APP){note_routing(p);return;}
     if(p.decoded.portnum==meshtastic_PortNum_POSITION_APP){note_position(p);return;}
     if(p.decoded.portnum!=meshtastic_PortNum_TEXT_MESSAGE_APP)return;
@@ -965,7 +996,7 @@ public:
         details_.status=remote_status;
         details_.request_active=remote_query.node==n->number&&remote_query.type!=UiNodeInfoRequest::None;
         details_.request_type=remote_query.type;
-        details_.telemetry=remote_telemetry;
+        details_.telemetry=n->telemetry_text[0]?n->telemetry_text:remote_telemetry;
         details_.position_source=n->position_time_text;
         if(n->position_valid){
             snprintf(state->location_text,sizeof(state->location_text),
@@ -974,7 +1005,7 @@ public:
             // Node-details map actions use the same MeshInk microdegree contract.
             details_.latitude=n->latitude/10;details_.longitude=n->longitude/10;
         }
-        if(n->has_battery){
+        if(n->has_battery&&!n->telemetry_text[0]){
             snprintf(state->telemetry_text,sizeof(state->telemetry_text),
                      "BATTERY %lu%%",(unsigned long)n->battery);
             details_.telemetry=state->telemetry_text;
