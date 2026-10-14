@@ -19,7 +19,7 @@
 namespace {
 constexpr size_t kMaxNodes=64, kMaxChannels=8, kMaxMessages=96;
 constexpr uint32_t kBroadcast=0xffffffffu;
-struct RemoteQuery { uint32_t node=0,started=0; uint8_t channel=0; UiNodeInfoRequest type=UiNodeInfoRequest::None; bool queued=false; };
+struct RemoteQuery { uint32_t node=0,started=0; uint8_t channel=0; UiNodeInfoRequest type=UiNodeInfoRequest::None; bool queued=false,ui_released=false; };
 static RemoteQuery remote_queries[3]{};
 static uint32_t remote_last_queued_ms=0;
 static bool remote_ever_queued=false;
@@ -1169,6 +1169,11 @@ void meshink_meshtastic_ui_begin(){
 UiDataProvider* meshink_meshtastic_ui_provider(){return state?&provider:nullptr;}
 void meshink_meshtastic_ui_tick(){
     for(auto& query:remote_queries){
+        if(query.type!=UiNodeInfoRequest::None&&query.queued&&!query.ui_released&&
+           (uint32_t)(millis()-query.started)>=5000UL){
+            query.ui_released=true;
+            changed();
+        }
         if(query.type!=UiNodeInfoRequest::None&&
            (uint32_t)(millis()-query.started)>=30000UL){
             query.type=UiNodeInfoRequest::None;
