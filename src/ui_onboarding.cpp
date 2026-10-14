@@ -6487,7 +6487,6 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
         map_last_gps_latitude=latitude;map_last_gps_longitude=longitude;
         if(timestamp)map_last_gps_timestamp=timestamp;
         update_auto_timezone_from_gps(latitude,longitude);
-        const uint32_t gps_now=millis();
         // Save the first verified fix after 15 minutes of wall-clock time,
         // including across reboots; don't depend on millis() reset at boot.
         const uint32_t now_epoch=map_gps_current_epoch();
@@ -6520,7 +6519,6 @@ void ui_status_set_gps(bool enabled,bool has_fix,int satellites,long latitude,lo
                     map_saved_gps_longitude=longitude;
                     map_saved_gps_timestamp=record.fix_epoch;
                     map_last_gps_saved_epoch=now_epoch;
-                    map_last_gps_save_ms=gps_now?gps_now:1;
                 }
             }
         }
