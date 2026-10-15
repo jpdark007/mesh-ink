@@ -18,11 +18,12 @@ except ImportError as exc:
 ROOT = Path(env.subst("$PROJECT_DIR")).resolve()
 SOURCE = ROOT / "docs" / "file_00000000248c820a81311144dc2df47d.png"
 OUTPUT = ROOT / "src" / "meshink_logo_bitmap.h"
-# Keep the original 520-pixel display scale; crop the two tiny lines
-# beneath the MeshInk wordmark (Stay Connected / LilyGo T5).
-# Resize first, then crop: do not squash the mountain or wordmark.
+# Keep the original 520-pixel display scale without stretching the artwork.
+# Exact approved test.43 crop: remove 18px of empty top border and 72px
+# of footer/ghost-shadow area from the 520x347 resized source.
 WIDTH, ORIGINAL_HEIGHT = 520, 347
-HEIGHT = 284
+CROP_TOP, CROP_BOTTOM = 18, 72
+HEIGHT = ORIGINAL_HEIGHT - CROP_TOP - CROP_BOTTOM
 
 
 def generate():
@@ -36,7 +37,7 @@ def generate():
         white.alpha_composite(rgba)
         grayscale = white.convert("L").resize(
             (WIDTH, ORIGINAL_HEIGHT), Image.Resampling.LANCZOS
-        ).crop((0, 0, WIDTH, HEIGHT))
+        ).crop((0, CROP_TOP, WIDTH, ORIGINAL_HEIGHT - CROP_BOTTOM))
         pixels = grayscale.tobytes()
 
     packed = bytearray((len(pixels) + 3) // 4)
