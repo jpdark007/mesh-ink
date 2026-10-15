@@ -2603,10 +2603,12 @@ static void draw_contact_details() {
         const int overview_source_y=max(
             ui_y(448),overview_position_y+
             overview_position_lines*ui_text_line_step(3)+ui_h(8));
-        ui_text_fit(node.position_source,layout.detail_value_x,overview_source_y,
-                    overview_position_width,2,0,false);
+        // Full-width timestamp: do not squeeze LAST FIX into the narrow value column.
+        if(node.position_source&&node.position_source[0])
+            ui_text_fit(node.position_source,layout.section_margin,overview_source_y,
+                        layout.section_width,3,0,false);
         const int overview_last_seen_y=max(
-            ui_y(476),overview_source_y+ui_text_height(2)+ui_h(18));
+            ui_y(490),overview_source_y+ui_text_height(3)+ui_h(18));
         ui_text("LAST HEARD",layout.section_margin,overview_last_seen_y+ui_h(4),2,0,true);
         ui_text_fit(node.last_seen,layout.detail_value_x,overview_last_seen_y,
                     overview_position_width,3,0,false);
@@ -2620,26 +2622,47 @@ static void draw_contact_details() {
             action_button("DELETE",right_action);}
         else action_button(meshtastic_node_ui?"SAVE NODE":"ADD CONTACT",full_action,true);
     } else if(page==NodeInfoPage::Status){
-        ui_text(meshtastic_node_ui?"DEVICE STATUS":"NODE STATUS",layout.section_margin,ui_y(220),3,0,true);
-        if(login_required&&!node.authenticated){
-            ui_draw_wrapped("This protocol requires authentication before status can be requested.",
-                            layout.section_margin,ui_y(282),layout.section_width,2,0,false,5);
-            if(!strcmp(node.status,"LOGIN FAILED"))ui_text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
-            action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
+        if(meshtastic_node_ui){
+            // This is a NodeInfo/User request, not a battery or health-status RPC.
+            // Show actual node information; show the request result as secondary text.
+            ui_text("NODE INFORMATION",layout.section_margin,ui_y(220),3,0,true);
+            ui_text("NODE ID",layout.section_margin,ui_y(288),2,0,true);
+            ui_text_fit(node.identity,layout.detail_value_x,ui_y(284),
+                        layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+            ui_text("ROLE",layout.section_margin,ui_y(360),2,0,true);
+            ui_text_fit((node.role_label&&node.role_label[0])?node.role_label:node_role_label(node.role),
+                        layout.detail_value_x,ui_y(356),
+                        layout.width-layout.detail_value_x-layout.section_margin,3,0,false);
+            ui_text("LAST HEARD",layout.section_margin,ui_y(432),2,0,true);
+            ui_text_fit(node.last_seen,layout.section_margin,ui_y(474),
+                        layout.section_width,3,0,false);
+            ui_text("REQUEST RESULT",layout.section_margin,ui_y(550),2,0,true);
+            ui_draw_wrapped(node.status&&node.status[0]?node.status:"NOT REQUESTED",
+                            layout.section_margin,ui_y(590),
+                            layout.section_width,2,0,false,3);
+            action_button(request_label(UiNodeInfoRequest::Status,"REFRESH NODE INFO"),full_action,true);
         }else{
-            int status_y=ui_y(258);
-            if(login_required){
-                char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
-                ui_text(login_text,layout.section_margin,status_y,2,0,true);
-                status_y=ui_y(294);
+            ui_text("NODE STATUS",layout.section_margin,ui_y(220),3,0,true);
+            if(login_required&&!node.authenticated){
+                ui_draw_wrapped("This protocol requires authentication before status can be requested.",
+                                layout.section_margin,ui_y(282),layout.section_width,2,0,false,5);
+                if(!strcmp(node.status,"LOGIN FAILED"))ui_text("LOGIN FAILED",layout.section_margin,ui_y(410),2,0,true);
+                action_button(node.login_active?"LOGGING IN...":"ENTER PASSWORD",full_action,true);
+            }else{
+                int status_y=ui_y(258);
+                if(login_required){
+                    char login_text[48];snprintf(login_text,sizeof(login_text),"LOGGED IN - %s",node.access_level?node.access_level:"UNKNOWN");
+                    ui_text(login_text,layout.section_margin,status_y,2,0,true);
+                    status_y=ui_y(294);
+                }
+                const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;
+                ui_draw_wrapped(node.status,layout.section_margin,status_y,
+                                layout.section_width,status_scale,0,true,14);
+                action_button(request_label(UiNodeInfoRequest::Status,"REQUEST STATUS"),full_action,true);
             }
-            const int status_scale=ui_text_max_line_width(node.status,3)<=layout.section_width?3:2;
-            ui_draw_wrapped(node.status,layout.section_margin,status_y,
-                            layout.section_width,status_scale,0,true,14);
-            action_button(request_label(UiNodeInfoRequest::Status,meshtastic_node_ui?"REQUEST NODE INFO":"REQUEST STATUS"),full_action,true);
         }
     } else if(page==NodeInfoPage::Telemetry){
-        ui_text("TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
+        ui_text(meshtastic_node_ui?"TELEMETRY & LOCATION":"TELEMETRY / POSITION",layout.section_margin,ui_y(220),3,0,true);
         if(login_required&&!node.authenticated){
             ui_draw_wrapped("This protocol requires authentication before telemetry can be requested.",
                             layout.section_margin,ui_y(282),layout.section_width,2,0,false,4);
@@ -2649,7 +2672,7 @@ static void draw_contact_details() {
                 ui_wrapped_line_count(node.telemetry,layout.section_width,3)<=4?3:2;
             ui_draw_wrapped(node.telemetry,layout.section_margin,ui_y(270),
                             layout.section_width,telemetry_scale,0,true,4);
-            ui_text("TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);
+            ui_text(meshtastic_node_ui?"LAST KNOWN POSITION":"TELEMETRY POSITION",layout.section_margin,ui_y(420),2,0,true);
             const int telemetry_position_y=ui_y(454);
             const int telemetry_position_lines=min(
                 2,ui_wrapped_line_count(node.position,layout.section_width,3));
@@ -2658,8 +2681,9 @@ static void draw_contact_details() {
             const int telemetry_source_y=max(
                 ui_y(522),telemetry_position_y+
                 telemetry_position_lines*ui_text_line_step(3)+ui_h(8));
-            ui_draw_wrapped(node.position_source,layout.section_margin,telemetry_source_y,
-                            layout.section_width,2,0,false,1);
+            if(node.position_source&&node.position_source[0])
+                ui_text_fit(node.position_source,layout.section_margin,telemetry_source_y,
+                            layout.section_width,3,0,false);
             if(node.latitude||node.longitude)ui_action_button("OPEN POSITION ON MAP",map_action,false);
             if(meshtastic_node_ui){
                 action_button(request_label(UiNodeInfoRequest::Telemetry,"REQUEST TELEMETRY"),left_action,true);
