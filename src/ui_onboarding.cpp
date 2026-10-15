@@ -229,8 +229,11 @@ static bool setup_complete = false;
 static bool toast_opens_main = false;
 static bool keyboard_message_mode = false;
 static bool keyboard_password_mode = false;
+static bool keyboard_channel_mode = false;
 static bool save_remote_password = false;
 static char compose_text[MESHINK_MESSAGE_TEXT_BYTES] = {};
+static char channel_hashtag[32] = {};
+static bool channel_menu_active = false;
 static char remote_password[16] = {};
 static UiDataProvider* ui_data = nullptr;
 static size_t selected_contact = 0;
@@ -618,6 +621,25 @@ struct UiSmoothFont {
     uint8_t visual_height;
     uint8_t line_step;
 };
+static size_t ui_utf8_next(const char* s,uint32_t& codepoint) {
+    const uint8_t first=(uint8_t)s[0];
+    if(first<0x80){codepoint=first;return 1;}
+    size_t length=0;
+    uint32_t value=0;
+    if(first>=0xC2&&first<=0xDF){length=2;value=first&0x1F;}
+    else if(first>=0xE0&&first<=0xEF){length=3;value=first&0x0F;}
+    else if(first>=0xF0&&first<=0xF4){length=4;value=first&0x07;}
+    else {codepoint='?';return 1;}
+    for(size_t i=1;i<length;++i){
+        const uint8_t next=(uint8_t)s[i];
+        if((next&0xC0)!=0x80){codepoint='?';return 1;}
+        value=(value<<6)|(next&0x3F);
+    }
+    if((length==3&&value<0x800)||(length==4&&value<0x10000)||value>0x10FFFF||
+       (value>=0xD800&&value<=0xDFFF)){codepoint='?';return 1;}
+    codepoint=value;
+    return length;
+}
 static UiSmoothFont ui_smooth_font(int scale) {
     // Every primary tier is a native FreeType raster. Nothing is enlarged at
     // runtime, which keeps baselines, curves and descenders internally stable.
@@ -638,9 +660,9 @@ static const MeshInkFontGlyph* ui_smooth_glyph(const MeshInkFontData* font,uint3
     if(codepoint!='?')return ui_smooth_glyph(font,'?');
     return nullptr;
 }
-static int ui_smooth_char_advance(char c,int scale) {
+static int ui_smooth_char_advance(uint32_t codepoint,int scale) {
     const UiSmoothFont face=ui_smooth_font(scale);
-    const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+    const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,codepoint);
     if(!glyph_data)return 0;
     return max(1,(int)((glyph_data->advanceX+8)>>4));
 }
@@ -650,8 +672,9 @@ static int ui_legacy_char_advance(char c,int scale) {
     const int pixels=right>=left?(right-left+1):3;
     return pixels*scale+scale;
 }
-static int ui_char_advance(char c,int scale) {
-    return scale>=3?ui_smooth_char_advance(c,scale):ui_legacy_char_advance(c,scale);
+static int ui_char_advance(uint32_t codepoint,int scale) {
+    return scale>=3?ui_smooth_char_advance(codepoint,scale):
+        ui_legacy_char_advance(codepoint<=255?(char)codepoint:'?',scale);
 }
 static int ui_text_height(int scale) {
     if(scale<3)return 7*scale;
@@ -664,7 +687,11 @@ static int ui_text_line_step(int scale) {
 static int ui_text_width_n(const char* s,size_t n,int scale) {
     if(!s||!n)return 0;
     int width=0;
-    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';++i)width+=ui_char_advance(s[i],scale);
+    for(size_t i=0;i<n&&s[i]&&s[i]!='\n';){
+        uint32_t codepoint=0;const size_t consumed=ui_utf8_next(s+i,codepoint);
+        if(i+consumed>n)break;
+        width+=ui_char_advance(codepoint,scale);i+=consumed;
+    }
     return width&&scale<3?width-scale:width;
 }
 static int ui_text_width(const char* s,int scale) {
@@ -675,8 +702,8 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
     const UiSmoothFont face=ui_smooth_font(scale);
     const int baseline=y+face.baseline_from_top;
     while(*s&&*s!='\n'){
-        const char c=*s++;
-        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        uint32_t codepoint=0;s+=ui_utf8_next(s,codepoint);
+        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,codepoint);
         if(!glyph_data)continue;
         const int gx=x+glyph_data->left;
         const int gy=baseline-glyph_data->top;
@@ -689,7 +716,7 @@ static void ui_smooth_text(const char* s,int x,int y,int scale,uint8_t color,boo
                 if(bold)meshink_display_draw_pixel(gx+sx+1,gy+sy,color,fb);
             }
         }
-        x+=ui_smooth_char_advance(c,scale);
+        x+=ui_smooth_char_advance(codepoint,scale);
     }
 }
 static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
@@ -700,8 +727,8 @@ static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
     const UiSmoothFont face=ui_smooth_font(scale);
     const int baseline=y+face.baseline_from_top;
     while(*s&&*s!='\n'){
-        const char c=*s++;
-        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,(uint8_t)c);
+        uint32_t codepoint=0;s+=ui_utf8_next(s,codepoint);
+        const MeshInkFontGlyph* glyph_data=ui_smooth_glyph(face.font,codepoint);
         if(!glyph_data)continue;
         const int gx=x+glyph_data->left;
         const int gy=baseline-glyph_data->top;
@@ -718,7 +745,7 @@ static void ui_smooth_text_clipped(const char* s,int x,int y,int scale,
                 if(bold&&px+1<clip_right)meshink_display_draw_pixel(px+1,py,color,fb);
             }
         }
-        x+=ui_smooth_char_advance(c,scale);
+        x+=ui_smooth_char_advance(codepoint,scale);
     }
 }
 static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bold=false) {
@@ -728,7 +755,8 @@ static void ui_text(const char* s,int x,int y,int scale,uint8_t color=0,bool bol
         return;
     }
     while(*s&&*s!='\n'){
-        const char c=*s++;
+        uint32_t codepoint=0;s+=ui_utf8_next(s,codepoint);
+        const char c=codepoint<=255?(char)codepoint:'?';
         if(c==' '){x+=3*scale;continue;}
         const uint8_t* rows=glyph(c);int left=0,right=4;ui_glyph_bounds(rows,left,right);
         if(right<left){x+=3*scale;continue;}
@@ -748,9 +776,11 @@ static void ui_text_fit(const char* value,int x,int y,int max_width,int scale,
     char clipped[64]{};size_t out=0;int width=0;
     const int dots=ui_text_width("...",scale);
     while(value[out]&&out<sizeof(clipped)-4){
-        const int advance=ui_char_advance(value[out],scale);
+        uint32_t codepoint=0;const size_t consumed=ui_utf8_next(value+out,codepoint);
+        const int advance=ui_char_advance(codepoint,scale);
         if(width+advance+dots>max_width)break;
-        clipped[out]=value[out];width+=advance;++out;
+        if(out+consumed>=sizeof(clipped)-4)break;
+        memcpy(clipped+out,value+out,consumed);width+=advance;out+=consumed;
     }
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     ui_text(clipped,x,y,scale,color,bold);
@@ -766,9 +796,11 @@ static void ui_centred_fit(const char* value,int y,int max_width,int scale,
     char clipped[64]{};size_t out=0;int width=0;
     const int dots=ui_text_width("...",scale);
     while(value[out]&&out<sizeof(clipped)-4){
-        const int advance=ui_char_advance(value[out],scale);
+        uint32_t codepoint=0;const size_t consumed=ui_utf8_next(value+out,codepoint);
+        const int advance=ui_char_advance(codepoint,scale);
         if(width+advance+dots>max_width)break;
-        clipped[out]=value[out];width+=advance;++out;
+        if(out+consumed>=sizeof(clipped)-4)break;
+        memcpy(clipped+out,value+out,consumed);width+=advance;out+=consumed;
     }
     clipped[out++]='.';clipped[out++]='.';clipped[out++]='.';clipped[out]=0;
     const int clipped_width=ui_text_width(clipped,scale);
@@ -778,14 +810,17 @@ static void ui_centred_fit(const char* value,int y,int max_width,int scale,
 static int ui_text_max_line_width(const char* value,int scale) {
     if(!value||!*value)return 0;
     int widest=0,current=0;
-    for(const char* p=value;;++p){
+    for(const char* p=value;;){
         if(!*p||*p=='\n'){
             if(current>0&&scale<3)current-=scale; // legacy bitmap keeps one trailing scale-wide gap
             widest=max(widest,current);current=0;
             if(!*p)break;
+            ++p;
             continue;
         }
-        current+=ui_char_advance(*p,scale);
+        uint32_t codepoint=0;
+        p+=ui_utf8_next(p,codepoint);
+        current+=ui_char_advance(codepoint,scale);
     }
     return widest;
 }
@@ -793,12 +828,14 @@ static size_t ui_wrap_take(const char* value,int max_width,int scale) {
     if(!value||!*value)return 0;
     size_t count=0,last_space=0;int width=0;
     while(value[count]&&value[count]!='\n'){
-        const int advance=ui_char_advance(value[count],scale);
+        uint32_t codepoint=0;
+        const size_t consumed=ui_utf8_next(value+count,codepoint);
+        const int advance=ui_char_advance(codepoint,scale);
         if(count&&width+advance>max_width)break;
-        if(!count&&advance>max_width)return 1;
+        if(!count&&advance>max_width)return consumed;
         width+=advance;
-        if(value[count]==' ')last_space=count;
-        ++count;
+        if(codepoint==' ')last_space=count;
+        count+=consumed;
     }
     if(!value[count]||value[count]=='\n')return count;
     return last_space?last_space:count;
@@ -896,11 +933,12 @@ static int ui_compose_wrap_lines(const char* value,int max_width,int scale,
         const char* last_space=nullptr;
         int width=0;
         while(*scan&&*scan!='\n'){
-            const int advance=ui_char_advance(*scan,scale);
+            uint32_t codepoint=0;const size_t consumed=ui_utf8_next(scan,codepoint);
+            const int advance=ui_char_advance(codepoint,scale);
             if(scan>start&&width+advance>max_width)break;
             width+=advance;
-            if(*scan==' ')last_space=scan;
-            ++scan;
+            if(codepoint==' ')last_space=scan;
+            scan+=consumed;
         }
         if(*scan=='\n'){
             lines[count++]={start,(size_t)(scan-start)};
@@ -1624,6 +1662,28 @@ static void draw_channels() {
         }
     }
     draw_bottom_nav(1);
+    if(channel_menu_active){
+        const MeshInkUiRect panel=ui_rect(28,260,484,500);
+        rounded_fill(panel.x,panel.y,panel.width,panel.height,ui_w(12),0xFF);
+        rounded_box(panel,ui_w(12),false);
+        ui_centred("CHANNELS MENU",ui_y(310),4,0,true);
+        ui_centred("MANAGE MESHCORE CHANNELS",ui_y(365),2,0,false);
+        ui_action_button("ADD HASHTAG",ui_rect(72,470,396,92),true);
+        ui_action_button("CLOSE",ui_rect(72,610,396,92),false);
+    }
+}
+
+static void draw_channel_add() {
+    meshink_display_set_all_white(&display);
+    draw_status_bar();
+    draw_app_header("ADD HASHTAG",true);
+    ui_centred("CHANNEL NAME",ui_y(150),3,0,true);
+    ui_section_card(ui_rect(38,190,464,80));
+    char displayed[34]{};
+    snprintf(displayed,sizeof(displayed),"#%s",channel_hashtag);
+    ui_text_fit(displayed,ui_x(58),ui_y(210),ui_w(424),3,0,false);
+    ui_centred("Enter a public topic name",ui_y(305),2,0,false);
+    draw_keyboard();
 }
 
 // Bold radio-tower marker for repeaters. Keep it deliberately simple so the
@@ -2862,6 +2922,10 @@ static void draw_screen() {
         draw_landscape_keyboard();
         return;
     }
+    if(keyboard_channel_mode){
+        draw_channel_add();
+        return;
+    }
     switch(screen){
         case Screen::Welcome:draw_welcome();break;case Screen::Presets:draw_presets();break;case Screen::CompanionConfirm:draw_companion_confirm();break;case Screen::ShutdownConfirm:draw_shutdown_confirm();break;
         case Screen::Contacts:draw_contacts();break;case Screen::ContactChat:draw_chat(false);break;case Screen::ContactDetails:draw_contact_details();break;
@@ -3354,6 +3418,12 @@ static void append(char c) {
         }
         return;
     }
+    if(keyboard_channel_mode){
+        if(!legal_name_character(c))return;
+        const size_t n=strlen(channel_hashtag);
+        if(n<sizeof(channel_hashtag)-1){channel_hashtag[n]=c;channel_hashtag[n+1]=0;}
+        return;
+    }
     if(!legal_name_character(c)){T5_DEBUGF(T5_LOG_UI,"[T5-UI] discarded illegal name character 0x%02X\n",(unsigned char)c);return;}
     if (replace_name_on_type) { node_name[0]=0; replace_name_on_type=false; }
     size_t n=strlen(node_name); if (n<20) { node_name[n]=c; node_name[n+1]=0; saved=false; }
@@ -3380,7 +3450,7 @@ static void open_screen(Screen next,bool preserve_map_centre=false) {
     const bool already_on_map=screen==Screen::Maps;
     map_taps={}; // prevent a pending map double tap from firing on another UI
     text_refresh_pending=false;
-    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;save_remote_password=false;remote_password[0]=0;screen=next;
+    keyboard_visible=false;keyboard_message_mode=false;keyboard_password_mode=false;keyboard_channel_mode=false;channel_menu_active=false;save_remote_password=false;remote_password[0]=0;screen=next;
     if(next==Screen::Maps) {
         load_map_with_feedback(already_on_map);
         return;
@@ -3586,12 +3656,43 @@ static bool handle_name_keyboard(int16_t x,int16_t y){
     return true;
 }
 
+static bool finish_channel_add() {
+    const bool ok=ui_data&&ui_data->add_hashtag_channel(channel_hashtag);
+    keyboard_channel_mode=false;
+    keyboard_visible=false;
+    channel_hashtag[0]=0;
+    show_toast(ok?"CHANNEL ADDED":"CHANNEL ADD FAILED");
+    draw_screen();refresh(MeshInkRefreshMode::Direct);
+    return true;
+}
+
+static bool handle_channel_keyboard(int16_t x,int16_t y){
+    if(!keyboard_visible||!keyboard_channel_mode)return false;
+    const auto metrics=keyboard_metrics(false);
+    if(y<metrics.dismiss_above&&hit_header_back(x,y)){keyboard_channel_mode=false;keyboard_visible=false;channel_hashtag[0]=0;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+    if(meshink_keyboard::in_row(y,metrics.mode_key.y,metrics)){
+        if(x<meshink_keyboard::mode_split(metrics)){cycle_keyboard_mode();draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+        if(x>=meshink_keyboard::delete_split(metrics)){const size_t n=strlen(channel_hashtag);if(n)channel_hashtag[n-1]=0;queue_text_refresh();return true;}
+    }
+    char character=0;
+    if(keyboard_character_at(x,y,false,character)){append(character);queue_text_refresh();return true;}
+    if(meshink_keyboard::in_row(y,metrics.bottom_top,metrics)){
+        if(x<meshink_keyboard::orientation_split(metrics)){set_keyboard_orientation(true);return true;}
+        const auto& save_key=metrics.wide_action_key;
+        if(x>=save_key.x&&x<save_key.x+save_key.width&&
+           y>=save_key.y&&y<save_key.y+save_key.height&&channel_hashtag[0])
+            return finish_channel_add();
+    }
+    return true;
+}
+
 static bool handle_app_tap(int16_t x,int16_t y) {
     if(screen==Screen::Welcome||screen==Screen::Presets||screen==Screen::CompanionConfirm||screen==Screen::ShutdownConfirm)return false;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&hit_header_back(x,y)){keyboard_visible=false;keyboard_message_mode=false;reset_chat_paging();open_screen(screen==Screen::ChannelChat?Screen::Channels:Screen::Contacts);return true;}
     if(screen==Screen::ContactChat&&hit_header_action(x,y)){keyboard_visible=false;keyboard_message_mode=false;details_from_discovery=false;details_page=0;open_screen(Screen::ContactDetails);return true;}
     if(screen==Screen::ContactDetails&&handle_password_keyboard(x,y))return true;
     if((screen==Screen::ContactChat||screen==Screen::ChannelChat)&&handle_message_keyboard(x,y))return true;
+    if(screen==Screen::Channels&&keyboard_channel_mode&&handle_channel_keyboard(x,y))return true;
     if(screen==Screen::RadioSettings&&keyboard_visible&&handle_name_keyboard(x,y))return true;
     const bool chat_main_page=(screen==Screen::ContactChat||screen==Screen::ChannelChat)&&
                               !keyboard_visible&&chat_page==0;
@@ -3613,6 +3714,13 @@ static bool handle_app_tap(int16_t x,int16_t y) {
             }
             break;
         case Screen::Channels:
+            if(channel_menu_active){
+                if(hit(x,y,ui_rect(72,470,396,92))){
+                    channel_menu_active=false;keyboard_channel_mode=true;keyboard_message_mode=false;keyboard_password_mode=false;keyboard_visible=true;channel_hashtag[0]=0;keyboard_symbols=false;keyboard_upper=false;draw_screen();refresh(MeshInkRefreshMode::FastGray16);return true;
+                }
+                if(hit(x,y,ui_rect(72,610,396,92))){channel_menu_active=false;draw_screen();refresh(MeshInkRefreshMode::Direct);return true;}
+                return true;
+            }
             if(ui_data){
                 const size_t count=ui_data->channel_count();
                 clamp_list_page(channels_page,count);
@@ -4029,6 +4137,21 @@ static void service_primary_button(){
     }pressed_at=0;handled=false;}
 }
 
+static void service_channel_button(){
+    static uint32_t pressed_at=0;
+    const bool pressed=meshink_channel_button_pressed();
+    if(pressed&&!pressed_at)pressed_at=millis();
+    if(!pressed&&pressed_at){
+        const uint32_t duration=millis()-pressed_at;
+        if(duration>=40&&duration<2000&&!standby_active&&screen==Screen::Channels&&!keyboard_visible){
+            channel_menu_active=!channel_menu_active;
+            last_user_activity=millis();
+            draw_screen();refresh(MeshInkRefreshMode::Direct,true);
+        }
+        pressed_at=0;
+    }
+}
+
 static void ui_close_headless_display_session() {
     if(!headless_display_session)return;
     message_alert_active=false;
@@ -4439,6 +4562,7 @@ void ui_loop() {
     }
     service_critical_battery();
     service_primary_button();
+    service_channel_button();
     if(standby_active&&deep_sleep_pending&&deep_sleep_standby&&!message_alert_active&&
        !meshink_primary_button_pressed()&&(int32_t)(millis()-deep_sleep_retry_at)>=0){
         deep_sleep_retry_at=millis()+250;

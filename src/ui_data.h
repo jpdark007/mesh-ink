@@ -71,6 +71,7 @@ public:
     virtual size_t channel_count() const = 0;
     virtual const UiListEntry& channel(size_t index) const = 0;
     virtual bool open_channel(size_t index) = 0;
+    virtual bool add_hashtag_channel(const char* hashtag) = 0;
     virtual size_t advert_count() const = 0;
     virtual const UiListEntry& advert(size_t index) const = 0;
     virtual bool open_advert(size_t index) = 0;

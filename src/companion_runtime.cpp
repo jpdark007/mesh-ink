@@ -448,6 +448,10 @@ static void companion_configure_ble_scan_response(const char* prefix,const char*
 
 MeshInkMesh the_mesh(meshink_radio_meshcore(), fast_rng, meshink_rtc_meshcore(), tables, store);
 MyMesh& meshink_meshcore() { return the_mesh; }
+
+void local_mesh_save_channels() {
+    store.saveChannels(&the_mesh);
+}
 bool local_mesh_enqueue_command(const uint8_t* frame,size_t len){return local_interface.enqueue(frame,len);}
 
 static uint32_t local_contacts_save_due=0;

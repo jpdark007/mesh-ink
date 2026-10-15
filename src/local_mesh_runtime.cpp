@@ -15,6 +15,8 @@
 #include <helpers/sensors/LPPDataHelpers.h>
 #include "meshcore_adapter.h"
 
+void local_mesh_save_channels();
+
 
 namespace {
 constexpr size_t MAX_UI_CONTACTS=16;
@@ -623,6 +625,30 @@ public:
     bool open_conversation(size_t i)override{if(i>=conversation_count_)return false;mark_read(MessageKind::Direct,conversations_[i].key,6);return activate(conversations_[i],false);}
     size_t contact_count()const override{return contact_count_;}const UiListEntry& contact(size_t i)const override{return contacts_[i].entry;}bool open_contact(size_t i)override{if(i>=contact_count_)return false;mark_read(MessageKind::Direct,contacts_[i].key,6);return activate(contacts_[i],false);}
     size_t channel_count()const override{return channel_count_;}const UiListEntry& channel(size_t i)const override{return channels_[i].entry;}bool open_channel(size_t i)override{if(i>=channel_count_)return false;mark_read(MessageKind::Channel,&channels_[i].channel_index,1);return activate(channels_[i],true);}
+    bool add_hashtag_channel(const char* hashtag) override {
+        if(!hashtag||!hashtag[0]||strlen(hashtag)>=31)return false;
+        char name[32]{};
+        strncpy(name,hashtag[0]=='#'?hashtag+1:hashtag,sizeof(name)-1);
+        if(!name[0])return false;
+        char hash_input[33]{};
+        snprintf(hash_input,sizeof(hash_input),"#%s",name);
+        uint8_t secret[32]{};
+        mesh::Utils::sha256(secret,16,(const uint8_t*)hash_input,strlen(hash_input));
+        for(int i=0;i<MAX_GROUP_CHANNELS;++i){
+            ChannelDetails existing{};
+            if(meshink_meshcore().getChannel(i,existing)&&!strcmp(existing.name,name))return false;
+            if(existing.name[0])continue;
+            ChannelDetails channel{};
+            strncpy(channel.name,name,sizeof(channel.name)-1);
+            memcpy(channel.channel.secret,secret,16);
+            if(!meshink_meshcore().setChannel(i,channel))return false;
+            local_mesh_save_channels();
+            refresh(true);
+            ui_request_data_refresh("channel-added");
+            return true;
+        }
+        return false;
+    }
     size_t advert_count()const override{return advert_count_;}const UiListEntry& advert(size_t i)const override{return adverts_[i].entry;}
     bool cache_discovered(const uint8_t* frame,size_t len){
         if(!frame||len<DISCOVERED_CONTACT_BASE_LEN||len>sizeof(discovered_[0].frame)){
