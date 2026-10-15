@@ -1075,10 +1075,11 @@ assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startu
 
 # Test44: field standby redesign uses the full-size MeshInk bitmap and only
 # shows unread summary cards that contain unread messages.
-assert "draw_branding_stack(ui_y(48),any_unread?ui_y(433):ui_y(594)," in source and "ui_h(any_unread?18:28),ui_h(86));" in source, "standby centres both marks inside the available space without moving unread cards"
-assert "const int mesh_height=ui_h(MESHINK_LOGO_HEIGHT);" in source and "const int mesh_top=top+max(0,(bottom-top-stack_height)/2);" in source, "branding stack uses actual generated logo dimensions"
-assert "draw_branding_stack(ui_y(92),ui_y(492),ui_h(22),ui_h(86));" in source, "About centres logo stack above author details"
-assert "draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125));" in source, "boot centres logo stack and retains 125px protocol logo"
+assert "draw_branding_stack(ui_y(48),any_unread?ui_y(433):ui_y(594)," in source and "ui_h(any_unread?18:28),ui_h(86)," in source and "ui_h(any_unread?0:35));" in source, "unread MeshInk position stays unchanged; other standby artwork moves up"
+assert "constexpr int kPreviousMeshInkHeight=257;" in source and "const int protocol_top=previous_mesh_top+previous_height+gap;" in source and "draw_protocol_logo(protocol_top,protocol_height);" in source, "protocol logos retain exact test.43 positions after image cropping"
+assert "const int mesh_top=protocol_top-gap-ui_h(MESHINK_LOGO_HEIGHT)-meshink_lift;" in source, "only MeshInk artwork is lifted"
+assert "draw_branding_stack(ui_y(92),ui_y(492),ui_h(22),ui_h(86),ui_h(30));" in source, "About raises only MeshInk by 30px"
+assert "draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125),ui_h(65));" in source, "boot raises only MeshInk by 65px"
 assert 'ui_centred("STANDBY",standby_state_y,5,0,true);' in source and '"DEEP SLEEP STANDBY"' in source, "standby keeps the large STANDBY identity and adds dedicated deep-sleep identity"
 assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
 assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
