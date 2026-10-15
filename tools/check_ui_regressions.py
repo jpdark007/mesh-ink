@@ -1075,7 +1075,7 @@ assert '[T5-INIT] wireless=OK' not in unified_source, "ambiguous wireless startu
 
 # Test44: field standby redesign uses the full-size MeshInk bitmap and only
 # shows unread summary cards that contain unread messages.
-assert "const int logo_top=any_unread?ui_y(70):ui_y(165);" in source and "draw_meshink_logo(logo_top,false);" in source, "standby lowers the full-size MeshInk logo only when there are no unread cards"
+assert "const int logo_top=any_unread?ui_y(58):ui_y(156);" in source and "draw_meshink_logo(logo_top,false);" in source and "draw_protocol_logo(any_unread?ui_y(350):ui_y(454),ui_h(86));" in source, "standby preserves full-size cropped MeshInk logo and clear unread-card spacing"
 assert 'ui_centred("STANDBY",standby_state_y,5,0,true);' in source and '"DEEP SLEEP STANDBY"' in source, "standby keeps the large STANDBY identity and adds dedicated deep-sleep identity"
 assert "has_direct=status_unread>0" in source and "has_channel=status_channel_unread>0" in source, "standby hides empty unread categories"
 assert "const int centred_x=(portrait_layout().width-ui_w(244))/2;" in source, "single standby unread card is centred"
