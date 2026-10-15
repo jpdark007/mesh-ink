@@ -3536,7 +3536,7 @@ static void draw_help() {
 
 static void draw_meshink_logo(int top,bool compact=false);
 static void draw_protocol_logo(int top,int height);
-static void draw_branding_stack(int top,int bottom,int gap,int protocol_height);
+static void draw_branding_stack(int top,int bottom,int gap,int protocol_height,int meshink_lift);
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);
@@ -3546,12 +3546,12 @@ static void draw_standby(){
     const bool has_channel=status_channel_unread>0;
     const bool any_unread=has_direct||has_channel;
 
-    // Centre the approved full-width, cropped MeshInk artwork and protocol
-    // mark together in the usable header area. Unread cards start at y=445,
-    // so with unread messages the branding region ends at y=433.
-    // Without unread messages, centre the marks above the y=620 standby label.
+    // Keep the MeshCore/Meshtastic logo exactly at its test.43 position,
+    // moving only the newly tight-cropped MeshInk artwork. When unread cards
+    // are present the existing MeshInk visible position already looks right.
     draw_branding_stack(ui_y(48),any_unread?ui_y(433):ui_y(594),
-                        ui_h(any_unread?18:28),ui_h(86));
+                        ui_h(any_unread?18:28),ui_h(86),
+                        ui_h(any_unread?0:35));
 
     MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
     MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
@@ -3689,22 +3689,26 @@ static void draw_protocol_logo(int top,int height){
     }
 }
 
-// Both logos are horizontally centred by their own renderers. This centres
-// their combined vertical stack within the reserved area on each screen,
-// using the generated cropped bitmap's actual height (not stale offsets).
-static void draw_branding_stack(int top,int bottom,int gap,int protocol_height){
-    const int mesh_height=ui_h(MESHINK_LOGO_HEIGHT);
-    const int stack_height=mesh_height+gap+protocol_height;
-    const int mesh_top=top+max(0,(bottom-top-stack_height)/2);
+// Freeze the protocol-logo Y coordinate from test.43. The original 257px
+// image included 33px of top whitespace; changing its crop must NEVER move
+// the MeshCore/Meshtastic logo. All requested offsets affect MeshInk only.
+// A zero lift preserves the previously visible MeshInk position exactly.
+static void draw_branding_stack(int top,int bottom,int gap,int protocol_height,int meshink_lift){
+    constexpr int kPreviousMeshInkHeight=257;
+    const int previous_height=ui_h(kPreviousMeshInkHeight);
+    const int previous_stack_height=previous_height+gap+protocol_height;
+    const int previous_mesh_top=top+max(0,(bottom-top-previous_stack_height)/2);
+    const int protocol_top=previous_mesh_top+previous_height+gap;
+    const int mesh_top=protocol_top-gap-ui_h(MESHINK_LOGO_HEIGHT)-meshink_lift;
     draw_meshink_logo(mesh_top,false);
-    draw_protocol_logo(mesh_top+mesh_height+gap,protocol_height);
+    draw_protocol_logo(protocol_top,protocol_height);
 }
 
 static void draw_about() {
     draw_app_header("ABOUT",true);
     const MeshInkUiLayout& layout=portrait_layout();
     // Between the header and the author details at y=506.
-    draw_branding_stack(ui_y(92),ui_y(492),ui_h(22),ui_h(86));
+    draw_branding_stack(ui_y(92),ui_y(492),ui_h(22),ui_h(86),ui_h(30));
     ui_centred("Made by Samo",ui_y(506),3,0,true);
     ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
     if(node_name[0])ui_centred_fit(node_name,ui_y(600),layout.width-ui_w(32),3,0,true);
@@ -6099,7 +6103,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
         meshink_display_set_all_white(&display);
         // Centre the larger boot branding between the top margin and
         // startup information, keeping the protocol logo at 125px high.
-        draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125));
+        draw_branding_stack(ui_y(90),ui_y(694),ui_h(28),ui_h(125),ui_h(65));
         ui_centred("STARTING UP...",ui_y(716),3,0,true);
         if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
         ui_centred(UI_VERSION,ui_y(885),2,0,true);
