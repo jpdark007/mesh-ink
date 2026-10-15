@@ -3545,13 +3545,12 @@ static void draw_standby(){
     const bool has_channel=status_channel_unread>0;
     const bool any_unread=has_direct||has_channel;
 
-    // With nothing waiting, lower the logo into the otherwise-empty centre of
-    // the screen. When unread cards are present retain the proven compact top
-    // placement so the logo, cards and lower standby treatment all fit.
-    const int logo_top=any_unread?ui_y(70):ui_y(165);
-    draw_meshink_logo(logo_top,true);
-    // 86px protocol branding ends before the unread cards at y=445.
-    draw_protocol_logo(any_unread?ui_y(320):ui_y(422),ui_h(86));
+    // Restore the original full 520px MeshInk scale. The two-line footer
+    // has been cropped from the image itself, reclaiming the vertical space.
+    // Keep both marks above unread cards (which begin at y=445).
+    const int logo_top=any_unread?ui_y(58):ui_y(156);
+    draw_meshink_logo(logo_top,false);
+    draw_protocol_logo(any_unread?ui_y(350):ui_y(454),ui_h(86));
 
     MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
     MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
@@ -3633,9 +3632,12 @@ static void draw_night_schedule(){
 }
 
 static void draw_meshink_logo(int top,bool compact) {
+    // The source artwork is already cropped, not resized, so both logo
+    // dimensions retain the original MeshInk proportions on every screen.
+    (void)compact;
     constexpr uint8_t shades[4]={0x00,0x55,0xAA,0xFF};
-    const int target_width=ui_w(compact?350:MESHINK_LOGO_WIDTH);
-    const int target_height=ui_h(compact?233:MESHINK_LOGO_HEIGHT);
+    const int target_width=ui_w(MESHINK_LOGO_WIDTH);
+    const int target_height=ui_h(MESHINK_LOGO_HEIGHT);
     const int left=(meshink_display_logical_width()-target_width)/2;
     for(int y=0;y<target_height;++y){
         const int source_y=(y*MESHINK_LOGO_HEIGHT)/target_height;
@@ -3689,8 +3691,8 @@ static void draw_protocol_logo(int top,int height){
 static void draw_about() {
     draw_app_header("ABOUT",true);
     const MeshInkUiLayout& layout=portrait_layout();
-    draw_meshink_logo(ui_y(118),true);
-    draw_protocol_logo(ui_y(370),ui_h(86));
+    draw_meshink_logo(ui_y(110),false);
+    draw_protocol_logo(ui_y(406),ui_h(86));
     ui_centred("Made by Samo",ui_y(506),3,0,true);
     ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
     if(node_name[0])ui_centred_fit(node_name,ui_y(600),layout.width-ui_w(32),3,0,true);
