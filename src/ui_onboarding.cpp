@@ -33,6 +33,8 @@
 #include "fonts/inter_30_regular.h"
 #include "fonts/inter_50_digits.h"
 #include "meshink_logo_bitmap.h"  // generated from original PNG at build time
+#include "meshcore_protocol_logo.h"
+#include "meshtastic_protocol_logo.h"
 
 #ifndef T5_FIRMWARE_VERSION
 #define T5_FIRMWARE_VERSION "1.3.0"
@@ -3533,6 +3535,7 @@ static void draw_help() {
 }
 
 static void draw_meshink_logo(int top,bool compact=false);
+static void draw_protocol_logo(int top,int height);
 
 static void draw_standby(){
     meshink_display_set_all_white(&display);
@@ -3546,7 +3549,9 @@ static void draw_standby(){
     // the screen. When unread cards are present retain the proven compact top
     // placement so the logo, cards and lower standby treatment all fit.
     const int logo_top=any_unread?ui_y(70):ui_y(165);
-    draw_meshink_logo(logo_top,false);
+    draw_meshink_logo(logo_top,true);
+    // 86px protocol branding ends before the unread cards at y=445.
+    draw_protocol_logo(any_unread?ui_y(320):ui_y(422),ui_h(86));
 
     MeshInkUiRect direct_rect=ui_rect(20,445,244,310);
     MeshInkUiRect channel_rect=ui_rect(276,445,244,310);
@@ -3628,10 +3633,9 @@ static void draw_night_schedule(){
 }
 
 static void draw_meshink_logo(int top,bool compact) {
-    (void)compact;
     constexpr uint8_t shades[4]={0x00,0x55,0xAA,0xFF};
-    const int target_width=ui_w(MESHINK_LOGO_WIDTH);
-    const int target_height=ui_h(MESHINK_LOGO_HEIGHT);
+    const int target_width=ui_w(compact?350:MESHINK_LOGO_WIDTH);
+    const int target_height=ui_h(compact?233:MESHINK_LOGO_HEIGHT);
     const int left=(meshink_display_logical_width()-target_width)/2;
     for(int y=0;y<target_height;++y){
         const int source_y=(y*MESHINK_LOGO_HEIGHT)/target_height;
@@ -3653,10 +3657,40 @@ static void draw_meshink_logo(int top,bool compact) {
     }
 }
 
+// Row-wise delta RLE avoids storing two large raw bitmaps in internal RAM.
+static void draw_protocol_logo(int top,int height){
+    const bool mt=mesh_protocol_descriptor().id==2;
+    const uint8_t* data=mt?MESHTASTIC_RLE:MESHCORE_RLE;
+    const int source_w=mt?MESHTASTIC_WIDTH:MESHCORE_WIDTH;
+    constexpr int source_h=125;
+    const int out_h=height;
+    const int out_w=max(1,(source_w*out_h+source_h/2)/source_h);
+    const int left=(meshink_display_logical_width()-out_w)/2;
+    size_t offset=0;
+    for(int y=0;y<source_h;++y){
+        const uint8_t count=data[offset++];
+        int previous=0;
+        int span_start=0;
+        for(unsigned edge=0;edge<count;++edge){
+            const uint8_t first=data[offset++];
+            const int delta=(first&0x80)?((first&0x7f)*128+data[offset++]):first;
+            previous+=delta;
+            if(!(edge&1)){span_start=previous;continue;}
+            const int x0=left+(span_start*out_w)/source_w;
+            const int x1=left+(previous*out_w+source_w-1)/source_w;
+            const int y0=top+(y*out_h)/source_h;
+            const int y1=top+((y+1)*out_h+source_h-1)/source_h;
+            if(x1>x0&&y1>y0)
+                meshink_display_fill_rect({x0,y0,x1-x0,y1-y0},0,fb);
+        }
+    }
+}
+
 static void draw_about() {
     draw_app_header("ABOUT",true);
     const MeshInkUiLayout& layout=portrait_layout();
     draw_meshink_logo(ui_y(118),true);
+    draw_protocol_logo(ui_y(370),ui_h(86));
     ui_centred("Made by Samo",ui_y(506),3,0,true);
     ui_centred("github.com/samo-nz/mesh-ink",ui_y(540),2,0,false);
     if(node_name[0])ui_centred_fit(node_name,ui_y(600),layout.width-ui_w(32),3,0,true);
@@ -6050,6 +6084,7 @@ void ui_startup(const MeshInkUiStartupPlan& plan) {
     if(plan.splash&&plan.display){
         meshink_display_set_all_white(&display);
         draw_meshink_logo(ui_y(160),false);
+        draw_protocol_logo(ui_y(530),ui_h(125));
         ui_centred("STARTING UP...",ui_y(716),3,0,true);
         if(node_name[0])ui_centred_fit(node_name,ui_y(830),portrait_layout().width-ui_w(32),3,0,true);
         ui_centred(UI_VERSION,ui_y(885),2,0,true);
