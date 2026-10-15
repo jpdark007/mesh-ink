@@ -67,6 +67,7 @@ struct Node {
     char role_label[24]{};
     char subtitle[48]{};
     char heard_text[16]{};
+    char heard_full[32]{};
     // UI-only discovery state; never change official NodeDB/persisted identity.
     bool name_known=false,name_request_pending=false,name_request_sent=false;
     uint8_t name_request_count=0; // two sends maximum per 12-hour window
@@ -219,8 +220,18 @@ uint32_t snapshot_checksum_seed(uint32_t generation,uint32_t count){
 void node_store_dirty(){
     if(state)state->node_store_dirty=true;
 }
+void format_last_heard_full(Node& n){
+    snprintf(n.heard_full,sizeof(n.heard_full),"NOT HEARD YET");
+    if(!n.heard)return;
+    time_t stamp=(time_t)n.heard;
+    struct tm calendar{};
+    if(localtime_r(&stamp,&calendar))
+        snprintf(n.heard_full,sizeof(n.heard_full),"%02u/%02u/%04u %02u:%02u",
+            (unsigned)calendar.tm_mday,(unsigned)(calendar.tm_mon+1),
+            (unsigned)(calendar.tm_year+1900),(unsigned)calendar.tm_hour,(unsigned)calendar.tm_min);
+}
 void format_position_time(Node& n){
-    n.position_time_text[0]=0;
+    snprintf(n.position_time_text,sizeof(n.position_time_text),"NO POSITION FIX");
     const uint32_t timestamp=n.position_fix_at?n.position_fix_at:n.position_received_at;
     if(!n.position_valid||!timestamp)return;
     time_t stamp=(time_t)timestamp;
@@ -1002,7 +1013,8 @@ public:
         Node* n=find_node(state->selected_node);if(!n)return false;
         details_={};
         details_.name=n->name;details_.identity=n->identity;
-        details_.last_seen=n->heard_text;details_.role=n->role;
+        format_last_heard_full(*n);
+        details_.last_seen=n->heard_full;details_.role=n->role;
         details_.role_label=n->role_label;details_.route=n->subtitle;
         details_.capabilities=UI_NODE_CAP_STATUS|UI_NODE_CAP_TELEMETRY;
         details_.saved_contact=true;
